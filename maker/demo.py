@@ -42,10 +42,6 @@ class MakerState(BaseModel):
     is_complete: bool = False
 
 class ManagerClient(BaseChatClient):
-    """
-    UNIVERSAL ORCHESTRATOR: 
-    Instead of forcing time math, this asks the model to update the 'State'.
-    """
     def __init__(self, state: MakerState, **kwargs):
         super().__init__(**kwargs)
         self.state = state
