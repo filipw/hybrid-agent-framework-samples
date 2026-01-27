@@ -27,7 +27,7 @@ class ConfidenceResult(BaseModel):
         return cls(confidence=0)
 
 def should_fallback_to_cloud(message: AgentExecutorResponse) -> bool:
-    text = message.agent_run_response.text or ""
+    text = message.agent_response.text or ""
     result = ConfidenceResult.parse_from_text(text)
     
     print(f"\n\n   📊 Verifier Score: {result.score}/10")
@@ -75,7 +75,7 @@ async def main():
         # Agents hold conversation history, so for each query demoinstration we create a new pair of local/remote agents
         async with (
             AzureCliCredential() as credential,
-            AzureAIAgentClient(async_credential=credential).create_agent(
+            AzureAIAgentClient(credential=credential).as_agent(
                 name="Cloud_LLM",
                 instructions="You are a fallback expert. The previous assistant was unsure. Provide a complete answer.",
             ) as cloud_agent,

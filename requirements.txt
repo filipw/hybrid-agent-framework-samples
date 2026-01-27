@@ -1,3 +1,5 @@
 python-dotenv
-agent-framework
-agent-framework-mlx
+agent-framework==1.0.0b260123
+agent-framework-azure-ai==1.0.0b260123
+agent-framework-mlx==0.4.1
+

@@ -168,7 +168,7 @@ class VotingExecutor(Executor):
 
 def create_transitions(state: MakerState):
     def parse_plan(response: AgentExecutorResponse) -> bool:
-        text = response.agent_run_response.text or "[]"
+        text = response.agent_response.text or "[]"
         clean_text = text.replace("```json", "").replace("```", "").strip()
         try:
             state.steps = json.loads(clean_text)
@@ -196,7 +196,7 @@ async def main():
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).as_agent(
             name="Cloud_Planner",
             instructions=(
                 "You are a decomposition engine. Your goal is to break a complex problem into a sequential list of atomic ACTIONABLE instructions.\n\n"
