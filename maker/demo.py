@@ -84,11 +84,23 @@ class ManagerClient(BaseChatClient):
         
         return "ERROR: No steps remaining."
 
-    async def _inner_get_response(self, *, messages: MutableSequence[ChatMessage], **kwargs) -> ChatResponse:
+    async def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
         text = await self._generate_text()
         return ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=text)])
 
-    async def _inner_get_streaming_response(self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any) -> AsyncIterable[ChatResponseUpdate]:
+    async def _inner_get_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
         text = await self._generate_text()
         yield ChatResponseUpdate(role=Role.ASSISTANT, text=text)
 
@@ -110,14 +122,15 @@ class VotingExecutor(Executor):
             return clean
         return "PARSE_ERROR"
 
-    def _get_text_content(self, message: Any) -> str:
-        if isinstance(message, ChatMessage): return message.text or ""
-        if hasattr(message, "agent_run_response"): return message.agent_run_response.text or ""
-        return str(message)
+    @handler
+    async def handle_agent_response(self, message: AgentExecutorResponse, ctx: WorkflowContext[ChatMessage]): 
+        await self._resolve_step(message.agent_response.text or "", ctx)
 
     @handler
-    async def process(self, message: object, ctx: WorkflowContext[ChatMessage]):
-        input_text = self._get_text_content(message)
+    async def handle_chat_message(self, message: ChatMessage, ctx: WorkflowContext[ChatMessage]):
+        await self._resolve_step(message.text or "", ctx)
+
+    async def _resolve_step(self, input_text: str, ctx: WorkflowContext[ChatMessage]):
         
         if self.state.attempts == 0 and "Current Task:" in input_text:
             task_line = input_text.split("Current Task:")[1].split("\n")[0].strip()
@@ -132,7 +145,12 @@ class VotingExecutor(Executor):
         status_msg = ""
         if ans == "PARSE_ERROR":
             print(f"   ❌ Attempt {self.state.attempts}: Parse Error")
-            status_msg = "RETRY"
+            if self.state.attempts >= self.state.max_attempts:
+                 print(f"   ⚠️ ABORTING STEP: Parse Error Limit Reached")
+                 status_msg = "RESOLVED: ERROR"
+                 self._commit_step("ERROR")
+            else:
+                 status_msg = "RETRY"
         else:
             self.state.current_votes[ans] += 1
             leader, count = self.state.current_votes.most_common(1)[0]
@@ -166,8 +184,24 @@ class VotingExecutor(Executor):
         if self.state.current_step_idx >= len(self.state.steps):
             self.state.is_complete = True
 
+class DecompositionPlan(BaseModel):
+    steps: List[str | dict] = Field(description="A list of imperative instructions (e.g. 'Add 5 and 3'). Do NOT include results (e.g. '5+3=8').")
+
 def create_transitions(state: MakerState):
     def parse_plan(response: AgentExecutorResponse) -> bool:
+        # Check for structured output first
+        if getattr(response.agent_response, "value", None) and isinstance(response.agent_response.value, DecompositionPlan):
+             raw_steps = response.agent_response.value.steps
+             # Normalize dictionary steps if necessary
+             state.steps = [
+                 step.get("content", step.get("step", str(step))) if isinstance(step, dict) else str(step) 
+                 for step in raw_steps
+             ]
+             print("\n📋 DECOMPOSITION PLAN (Structured):")
+             print(json.dumps(state.steps, indent=2))
+             print("-" * 40)
+             return True
+
         text = response.agent_response.text or "[]"
         clean_text = text.replace("```json", "").replace("```", "").strip()
         try:
@@ -199,14 +233,17 @@ async def main():
         AzureAIAgentClient(credential=credential).as_agent(
             name="Cloud_Planner",
             instructions=(
-                "You are a decomposition engine. Your goal is to break a complex problem into a sequential list of atomic ACTIONABLE instructions.\n\n"
+                "You are a decomposition engine. Your goal is to break a complex user request into a sequence of atomic, actionable steps for a worker agent to execute one by one.\n\n"
                 "RULES:\n"
-                "1. DATA PRESERVATION: You MUST include the specific objects, names, or values from the text in your instructions.\n"
-                "2. DEPENDENCY: Assuming the previous step output defines the 'State', describe the next ACTION to take on that state.\n"
-                "3. FORMAT: Output ONLY a raw JSON list of strings."
-                "4. SOLUTION MAKING: Do NOT attempt to solve the problem, only decompose it into steps."
-                "5. STATE CHANGING: Each step should modify the state in some way.\n\n"
+                "1. INSTRUCTION NOT SOLUTION: Output commands (e.g., 'Find X', 'Calculate Y', 'Search for Z'), NOT results or facts. Do not perform the task yourself.\n"
+                "2. ATOMIC STEPS: Each step must be a single, distinct action.\n"
+                "3. FORWARD REFERENCES: Refer to the output of previous steps as 'the result', 'the output', or 'the previous state'. Do not assume you know what the value is.\n"
+                "4. DATA FIDELITY: Preserve specific names, numbers, and entities from the user's request exactly.\n"
+                "5. NO PREDICTIONS: Do not predict, simulate, or include the outcome of the steps in the instructions.\n"
+                "6. FORMAT: Return a list of strings where each string is an imperative instruction.\n"
+                "7. NO EQUALS SIGNS: Do not use '=' to show results.\n"
             ),
+            default_options={"response_format": DecompositionPlan},
         ) as cloud_planner,
     ):
         manager = ChatAgent(
