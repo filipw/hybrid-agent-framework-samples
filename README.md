@@ -11,6 +11,7 @@ These demos illustrate different collaboration patterns to optimize for latency,
 | 💻 [SLM-Default, LLM-Fallback](./slm-default-llm-fallback) | Route queries to a local SLM first, escalating to cloud only if the local model's output fails verification. | [demo.py](./slm-default-llm-fallback/demo.py) | [arXiv:2510.03847](https://arxiv.org/abs/2510.03847) | Cost & Latency Optimization |
 | 💻 [Predictive Router](./router-agent) | Use a local router to classify queries as "weak" or "strong". Route simple tasks to local models and complex ones to the cloud. | [demo.py](./router-agent/demo.py) | [arXiv:2501.01818](https://arxiv.org/abs/2501.01818) | Dynamic Routing |
 | 💻 [MAKER Protocol](./maker) | Decompose complex tasks using a cloud-based "Planner" and execute atomic steps using a local "Voting Solver" with convergence checks. | [demo.py](./maker/demo.py) | [arXiv:2511.09030](https://arxiv.org/abs/2511.09030) | Task Decomposition |
+| 💻 [MINIONS Protocol](./minions) | Decompose extraction tasks into parallel jobs for local "minions" to process on document chunks, synthesizing results in the cloud. | [demo.py](./minions/demo.py) | [arXiv:2502.15964](https://arxiv.org/abs/2502.15964) | Local-Remote Map-Reduce |
 
 ## Getting Started
 
