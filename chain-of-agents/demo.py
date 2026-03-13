@@ -34,12 +34,6 @@ logging.getLogger("agent_framework").setLevel(logging.ERROR)
 
 load_dotenv()
 
-class CoAState(BaseModel):
-    query: str = ""
-    chunks: List[str] = Field(default_factory=list)
-    current_idx: int = 0
-    accumulated_message: str = "No relevant information found yet."
-
 def ensure_stateless(msgs):
     """Ensures we don't build up long conversation histories for stateless node."""
     return [msgs[-1]]
@@ -47,24 +41,25 @@ def ensure_stateless(msgs):
 class WorkerExecutor(Executor):
     """Local worker that reads a chunk and passes updated findings down the chain."""
     
-    def __init__(self, name: str, client: MLXChatClient, state: CoAState):
+    def __init__(self, name: str, client: MLXChatClient, query: str, chunk: str, worker_idx: int, total_workers: int):
         super().__init__(id=name)
         self.client = client
-        self.state = state
+        self.query = query
+        self.chunk = chunk
+        self.worker_idx = worker_idx
+        self.total_workers = total_workers
 
     @handler
     async def process_chunk(self, message: str, ctx: WorkflowContext[str]):
-        if self.state.current_idx >= len(self.state.chunks):
-            await ctx.send_message(self.state.accumulated_message)
-            return
+        # 'message' contains the context accumulated by the previous agent in the chain
+        # When receiving an AgentExecutorResponse, extract the text payload
+        if hasattr(message, "agent_response") and hasattr(message.agent_response, "text"):
+            message = message.agent_response.text or ""
             
-        chunk = self.state.chunks[self.state.current_idx]
-        prev_msg = self.state.accumulated_message
-        
         prompt = (
-            f"User Query: {self.state.query}\n\n"
-            f"Previous Worker's Findings:\n{prev_msg}\n\n"
-            f"Your Assigned Text Chunk:\n---\n{chunk}\n---\n\n"
+            f"User Query: {self.query}\n\n"
+            f"Previous Worker's Findings:\n{message}\n\n"
+            f"Your Assigned Text Chunk:\n---\n{self.chunk}\n---\n\n"
             "Task: You are a Worker Agent in a Chain of Agents. Read your assigned text chunk. "
             "If it contains information relevant to the user query, integrate it with the Previous Worker's Findings to create an updated, comprehensive summary of events. "
             "If it contains no relevant information, output exactly the Previous Worker's Findings. "
@@ -74,34 +69,10 @@ class WorkerExecutor(Executor):
         response = await self.client.get_response([ChatMessage(role=Role.USER, text=prompt)])
         output_text = response.messages[-1].text.strip()
         
-        print(f"\n   [Worker {self.state.current_idx + 1}/{len(self.state.chunks)}] Chunk processed. Extracted Info Length: {len(output_text)} chars")
+        print(f"\n   [{self.id} ({self.worker_idx}/{self.total_workers})] Chunk processed. Extracted Info Length: {len(output_text)} chars")
         
-        self.state.accumulated_message = output_text
-        self.state.current_idx += 1
-        
-        if self.state.current_idx < len(self.state.chunks):
-            # Pass control back to this worker pool for the next chunk
-            await ctx.send_message("CONTINUE_CHAIN")
-        else:
-            # Chain is done, pass control to Manager with the accumulated message
-            await ctx.send_message(self.state.accumulated_message)
-
-def is_chain_complete(msg) -> bool:
-    # Just need to check that it isn't CONTINUE_CHAIN to move to complete since worker
-    # now outputs pure text instead of a control signal
-    text = msg if isinstance(msg, str) else (msg.agent_response.text or "")
-    if text == "CONTINUE_CHAIN":
-        return False
-    return self_check_continue(text) == False
-
-def self_check_continue(text):
-    return text == "CONTINUE_CHAIN"
-
-def is_chain_continue(msg) -> bool:
-    if isinstance(msg, str): return msg == "CONTINUE_CHAIN"
-    return isinstance(msg, AgentExecutorResponse) and "CONTINUE_CHAIN" in (msg.agent_response.text or "")
-
-
+        # Pass the extracted information as a message to the next agent in the sequence
+        await ctx.send_message(output_text)
 
 async def main():
     print("===============================================================")
@@ -122,8 +93,6 @@ async def main():
     
     print(f"❔ Query: {query}")
     print(f"📄 Document split into {len(document_chunks)} sequential chunks.\n")
-
-    state = CoAState(query=query, chunks=document_chunks)
     
     # 1. Local MLX client for the Workers
     mlx_config = MLXGenerationConfig(max_tokens=300, temp=0.1)
@@ -132,8 +101,6 @@ async def main():
         generation_config=mlx_config,
         message_preprocessor=ensure_stateless
     )
-    
-    chain_worker = WorkerExecutor(name="Local_Worker_Chain", client=mlx_client, state=state)
     
     # 2. Cloud Agent for the final Manager/Refiner
     async with AzureCliCredential() as credential:
@@ -147,30 +114,38 @@ async def main():
             )
         )
         
-        # 3. Build the graph logic
+        # 3. Create distinct worker agents and build the chain logic
         builder = WorkflowBuilder()
-        builder.set_start_executor(chain_worker)
         
-        # Chain loop
-        builder.add_edge(
-            source=chain_worker, 
-            target=chain_worker, 
-            condition=is_chain_continue
-        )
-        # End of chain, route to manager
-        builder.add_edge(
-            source=chain_worker, 
-            target=manager, 
-            condition=is_chain_complete
-        )
+        workers = []
+        for i, chunk in enumerate(document_chunks):
+            worker = WorkerExecutor(
+                name=f"Worker_{i+1}", 
+                client=mlx_client, 
+                query=query, 
+                chunk=chunk,
+                worker_idx=i+1,
+                total_workers=len(document_chunks)
+            )
+            workers.append(worker)
+            
+        builder.set_start_executor(workers[0])
+        
+        # Link workers sequentially (Worker 1 -> Worker 2 -> ... -> Worker N)
+        for i in range(len(workers) - 1):
+            builder.add_edge(source=workers[i], target=workers[i+1])
+            
+        # End of chain: route the final worker directly to the manager
+        builder.add_edge(source=workers[-1], target=manager)
         
         workflow = builder.build()
         
         print("🚀 Starting Chain...\n")
         current_agent = None
         
-        # Run workflow 
-        async for event in workflow.run_stream("START"):
+        # Run workflow passing the initial context string
+        initial_findings = "No relevant information found yet."
+        async for event in workflow.run_stream(initial_findings):
             if isinstance(event, AgentRunUpdateEvent):
                 # We only want to stream out the Manager's final answer to the user
                 if event.executor_id == "Cloud_Manager":
