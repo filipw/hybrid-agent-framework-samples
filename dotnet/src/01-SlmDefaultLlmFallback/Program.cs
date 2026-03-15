@@ -102,9 +102,9 @@ namespace SlmDefaultLlmFallback
     }
 
     /// <summary>[LLM] Cloud_LLM – fallback for low-confidence SLM responses.</summary>
-    sealed class CloudLLMExecutor(IChatClient llmClient) : Executor<SLMResult>("Cloud_LLM")
+    sealed class CloudLLMExecutor(IChatClient llmClient) : Executor<SLMResult, string>("Cloud_LLM")
     {
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             SLMResult slmResult, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             Console.Write("   🤖 Cloud_LLM: ");
@@ -121,6 +121,7 @@ namespace SlmDefaultLlmFallback
             }
             Console.WriteLine();
             await context.YieldOutputAsync(fullText, cancellationToken);
+            return fullText;
         }
     }
 }

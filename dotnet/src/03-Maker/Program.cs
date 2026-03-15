@@ -117,7 +117,7 @@ namespace Maker
     /// Manager – pure orchestration, no LLM calls.
     /// Sends a CoT prompt to the Solver, or calls YieldOutputAsync to terminate.
     /// </summary>
-    sealed class ManagerExecutor(MakerState state) : Executor<string>("Manager")
+    sealed class ManagerExecutor(MakerState state) : Executor<string, string>("Manager")
     {
         private const string CoTInstructions = """
             INSTRUCTION:
@@ -128,7 +128,7 @@ namespace Maker
                Use ONLY the raw value – no extra phrases like 'The Final Answer is...'.
             """;
 
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string _, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             if (state.IsComplete)
@@ -138,13 +138,13 @@ namespace Maker
                 Console.WriteLine($"🤖 Final State: {finalResult}");
                 Console.WriteLine("==========================================");
                 await context.YieldOutputAsync($"WORKFLOW_COMPLETE: {finalResult}", cancellationToken);
-                return; // no SendMessageAsync → no edge fires → workflow terminates
+                return $"WORKFLOW_COMPLETE: {finalResult}";
             }
 
             if (state.CurrentStepIdx >= state.Steps.Count)
             {
                 await context.YieldOutputAsync("ERROR: No steps remaining.", cancellationToken);
-                return;
+                return "ERROR: No steps remaining.";
             }
 
             string currentStep = state.Steps[state.CurrentStepIdx];
@@ -155,6 +155,7 @@ namespace Maker
                   $"Current Task: {currentStep}\n\n{CoTInstructions}";
 
             await context.SendMessageAsync(prompt, cancellationToken);
+            return prompt;
         }
     }
 

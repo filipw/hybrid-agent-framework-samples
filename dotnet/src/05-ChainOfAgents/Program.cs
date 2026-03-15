@@ -119,9 +119,9 @@ namespace ChainOfAgents
     /// <summary>
     /// [LLM] Cloud_Manager – receives the final CU and answers the query.
     /// </summary>
-    sealed class CloudManagerExecutor(IChatClient llmClient, string query) : Executor<string>("Cloud_Manager")
+    sealed class CloudManagerExecutor(IChatClient llmClient, string query) : Executor<string, string>("Cloud_Manager")
     {
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string finalCu, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string instructions =
@@ -145,6 +145,7 @@ namespace ChainOfAgents
             }
             Console.WriteLine();
             await context.YieldOutputAsync(fullText, cancellationToken);
+            return fullText;
         }
     }
 }

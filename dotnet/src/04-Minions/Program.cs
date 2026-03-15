@@ -287,7 +287,7 @@ namespace Minions
 
     /// <summary>[LLM] Cloud_Evaluator – scores the quality of the synthesized answer.</summary>
     sealed class CloudEvaluatorExecutor(IChatClient llmClient, string document, string userQuery)
-        : Executor<string>("Cloud_Evaluator")
+        : Executor<string, string>("Cloud_Evaluator")
     {
         private readonly string _instructions =
             $"""
@@ -302,7 +302,7 @@ namespace Minions
             User Query: {userQuery}
             """;
 
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string evalRequest, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             Console.WriteLine("\n--- Step 4: Response Quality Evaluation (RemoteLM) ---");
@@ -320,6 +320,7 @@ namespace Minions
             }
             Console.WriteLine();
             await context.YieldOutputAsync(evalText, cancellationToken);
+            return evalText;
         }
     }
 }

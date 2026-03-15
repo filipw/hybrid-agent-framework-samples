@@ -20,7 +20,8 @@ namespace HybridAgentDemos.Shared;
 ///
 /// Azure AI Foundry config:
 ///   AZURE_AI_FOUNDRY_ENDPOINT      — OpenAI-compatible endpoint, e.g. https://&lt;resource&gt;.ai.azure.com/openai/v1/
-///   AZURE_AI_MODEL_DEPLOYMENT_NAME — model deployment name, e.g. gpt-4.1
+///   AZURE_AI_SLM_DEPLOYMENT_NAME   — deployment name for the SLM role, e.g. gpt-4o-mini
+///   AZURE_AI_LLM_DEPLOYMENT_NAME   — deployment name for the LLM role, e.g. gpt-4.1
 ///
 /// Authentication for Azure AI: run `az login` first.
 /// </summary>
@@ -44,7 +45,7 @@ public static class BackendFactory
         backend.ToLowerInvariant() switch
         {
             "ollama"   => CreateOllamaClient(role),
-            "azure-ai" => CreateAzureAiClient(),
+            "azure-ai" => CreateAzureAiClient(role),
             _ => throw new InvalidOperationException(
                 $"Unknown backend '{backend}'. Supported values: ollama, azure-ai")
         };
@@ -63,14 +64,15 @@ public static class BackendFactory
 
     // ---------------------------------------------------------------------------
     // Azure AI Foundry  — OpenAI-compatible endpoint with bearer token auth.
-    // Both SLM and LLM roles use the same deployment (no stateful agent resources).
+    // SLM and LLM roles use separate deployment names.
     // ---------------------------------------------------------------------------
-    private static IChatClient CreateAzureAiClient()
+    private static IChatClient CreateAzureAiClient(string role)
     {
-        var endpoint   = Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT")
+        var endpoint       = Environment.GetEnvironmentVariable("AZURE_AI_FOUNDRY_ENDPOINT")
             ?? throw new InvalidOperationException("AZURE_AI_FOUNDRY_ENDPOINT is not set.");
-        var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME")
-            ?? throw new InvalidOperationException("AZURE_AI_MODEL_DEPLOYMENT_NAME is not set.");
+        var deploymentVar  = $"AZURE_AI_{role}_DEPLOYMENT_NAME";
+        var deployment     = Environment.GetEnvironmentVariable(deploymentVar)
+            ?? throw new InvalidOperationException($"{deploymentVar} is not set.");
 
         var options = new OpenAIClientOptions { Endpoint = new Uri(endpoint) };
         var client  = new OpenAIClient(

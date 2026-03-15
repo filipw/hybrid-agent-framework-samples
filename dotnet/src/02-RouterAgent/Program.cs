@@ -106,9 +106,9 @@ namespace RouterAgent
     /// <summary>
     /// [SLM] Weak_Model_Worker – handles simple queries using the local model.
     /// </summary>
-    sealed class WeakModelWorker(IChatClient slmClient) : Executor<RouterDecision>("Weak_Model_Worker")
+    sealed class WeakModelWorker(IChatClient slmClient) : Executor<RouterDecision, string>("Weak_Model_Worker")
     {
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             RouterDecision decision, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             Console.Write(" 🤖 Weak_Model_Worker [Local SLM]: ");
@@ -124,15 +124,16 @@ namespace RouterAgent
             }
             Console.WriteLine();
             await context.YieldOutputAsync(fullText, cancellationToken);
+            return fullText;
         }
     }
 
     /// <summary>
     /// [LLM] Strong_Model_Worker – handles complex queries using the cloud LLM.
     /// </summary>
-    sealed class StrongModelWorker(IChatClient llmClient) : Executor<RouterDecision>("Strong_Model_Worker")
+    sealed class StrongModelWorker(IChatClient llmClient) : Executor<RouterDecision, string>("Strong_Model_Worker")
     {
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             RouterDecision decision, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             Console.Write(" 🤖 Strong_Model_Worker [Cloud LLM]: ");
@@ -148,6 +149,7 @@ namespace RouterAgent
             }
             Console.WriteLine();
             await context.YieldOutputAsync(fullText, cancellationToken);
+            return fullText;
         }
     }
 }

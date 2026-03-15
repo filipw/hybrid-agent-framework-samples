@@ -12,7 +12,8 @@
         "OLLAMA_LLM_MODEL": "llama3.1:8b",
 
         "AZURE_AI_FOUNDRY_ENDPOINT": "https://<resource>.ai.azure.com/openai/v1/",
-        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-4.1"
+        "AZURE_AI_SLM_DEPLOYMENT_NAME": "gpt-4o-mini",
+        "AZURE_AI_LLM_DEPLOYMENT_NAME": "gpt-4.1"
 
       }
     }
