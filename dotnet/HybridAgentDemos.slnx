@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="src/Shared/Shared.csproj" />
+  <Project Path="src/01-SlmDefaultLlmFallback/01-SlmDefaultLlmFallback.csproj" />
+  <Project Path="src/02-RouterAgent/02-RouterAgent.csproj" />
+  <Project Path="src/03-Maker/03-Maker.csproj" />
+  <Project Path="src/04-Minions/04-Minions.csproj" />
+  <Project Path="src/05-ChainOfAgents/05-ChainOfAgents.csproj" />
+</Solution>

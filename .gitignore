@@ -206,3 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .DS_Store
+
+# .NET build artifacts
+dotnet/**/bin/
+dotnet/**/obj/
+dotnet/**/*.user
+dotnet/**/.vs/
+# launchSettings.json contains personal endpoint URLs — use launchSettings.json.example as the template
+dotnet/**/Properties/launchSettings.json

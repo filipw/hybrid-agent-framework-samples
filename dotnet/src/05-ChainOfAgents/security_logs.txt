@@ -1,0 +1,11 @@
+[10-Jan 08:00] SERVER_01: Boot sequence initiated. All systems nominal.
+[10-Jan 14:32] FIREWALL: Blocked 45 unauthorized access attempts from external IP range.
+[11-Jan 09:15] EMAIL_GATEWAY: Employee 'alice@company.com' received attachment 'invoice_Q4.zip'.
+[11-Jan 09:17] WORKSTATION_A: Zip file extracted. Executable 'invoice_Q4.pdf.exe' launched by user ALICE.
+[11-Jan 09:18] ANTIVIRUS: Warning - Suspicious process behavior detected. Scan initiated.
+[12-Jan 02:00] BACKUP_SERVER: Nightly backup of DATABASE_MAIN completed successfully.
+[12-Jan 11:45] SERVER_01: CPU usage spiked to 99%. Anomalous encrypted traffic detected over port 443.
+[12-Jan 11:50] DATABASE_MAIN: Disconnected. Access denied. Ransomware note 'PAY_CRYPT.txt' created in root.
+[13-Jan 08:00] IT_ADMIN: Network isolated. Workstation_A quarantined.
+[13-Jan 10:20] IT_ADMIN: Restoration of BACKUP_SERVER data to DATABASE_MAIN initiated.
+[13-Jan 15:00] SERVER_01: Services restored. System back online.

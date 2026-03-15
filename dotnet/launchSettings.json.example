@@ -1,0 +1,20 @@
+{
+  "profiles": {
+    "<ProjectName>": {
+      "commandName": "Project",
+      "environmentVariables": {
+
+        "SLM_BACKEND": "ollama",
+        "LLM_BACKEND": "ollama",
+
+        "OLLAMA_ENDPOINT": "http://localhost:11434",
+        "OLLAMA_SLM_MODEL": "phi4-mini",
+        "OLLAMA_LLM_MODEL": "llama3.1:8b",
+
+        "AZURE_AI_FOUNDRY_ENDPOINT": "https://<resource>.ai.azure.com/openai/v1/",
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "gpt-4.1"
+
+      }
+    }
+  }
+}

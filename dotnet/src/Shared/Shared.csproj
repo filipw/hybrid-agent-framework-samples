@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>HybridAgentDemos.Shared</RootNamespace>
+    <NoWarn>$(NoWarn);OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Azure AI Foundry via OpenAI-compatible endpoint.
+         Brings OpenAI, Microsoft.Extensions.AI.OpenAI, and BearerTokenPolicy transitively. -->
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc4" />
+    <PackageReference Include="Azure.Identity"             Version="1.*"        />
+    <PackageReference Include="Microsoft.Extensions.AI"    Version="10.*"       />
+    <!-- Local inference via Ollama -->
+    <PackageReference Include="OllamaSharp"                Version="5.*"        />
+  </ItemGroup>
+
+</Project>
