@@ -7,9 +7,9 @@
 // prompt for the local SLM Solver.  The Solver runs the step multiple times
 // and applies majority-vote convergence (k_threshold=3 margin).
 //
-// Backend configuration (see dotnet/.env.example):
+// Backend configuration (see dotnet/launchSettings.json.example):
 //   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-openai)
+//   LLM_BACKEND  — inference backend for the LLM role (default: azure-ai)
 // =============================================================================
 
 using System.Text.Json;
@@ -35,10 +35,15 @@ var managerExecutor = new ManagerExecutor(state);
 var solverExecutor  = new VotingExecutor(slmClient, state);
 
 // Cloud_Planner → Manager → Voting_Solver ↩ (loop until all steps converge)
-// Manager terminates by calling YieldOutputAsync without SendMessageAsync
+// Manager terminates by returning a "WORKFLOW_COMPLETE" or "ERROR:" string;
+// the conditional edge guards against routing those values to the Solver.
+Func<object?, bool> continueLoop = msg => msg is string s
+    && !s.StartsWith("WORKFLOW_COMPLETE")
+    && !s.StartsWith("ERROR:");
+
 var workflow = new WorkflowBuilder(plannerExecutor)
     .AddEdge(plannerExecutor, managerExecutor)
-    .AddEdge(managerExecutor, solverExecutor)
+    .AddEdge(managerExecutor, solverExecutor, continueLoop)
     .AddEdge(solverExecutor,  managerExecutor)
     .WithOutputFrom(managerExecutor)
     .Build();
@@ -70,7 +75,7 @@ namespace Maker
     /// [LLM] Cloud_Planner – decomposes the user query into atomic ordered steps.
     /// Sends "PLAN_READY" to the Manager once state.Steps is populated.
     /// </summary>
-    sealed class CloudPlannerExecutor(IChatClient llmClient, MakerState state) : Executor<string>("Cloud_Planner")
+    sealed class CloudPlannerExecutor(IChatClient llmClient, MakerState state) : Executor<string, string>("Cloud_Planner")
     {
         private const string PlannerInstructions = """
             You are a decomposition engine. Break the user request into atomic, actionable steps.
@@ -83,7 +88,7 @@ namespace Maker
             6. Do NOT use '=' to show results.
             """;
 
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string query, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             var response = await llmClient.GetResponseAsync(
@@ -109,13 +114,15 @@ namespace Maker
             Console.WriteLine(JsonSerializer.Serialize(state.Steps, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine(new string('-', 40));
 
-            await context.SendMessageAsync("PLAN_READY", cancellationToken);
+            return "PLAN_READY";
         }
     }
 
     /// <summary>
     /// Manager – pure orchestration, no LLM calls.
-    /// Sends a CoT prompt to the Solver, or calls YieldOutputAsync to terminate.
+    /// Returns a CoT prompt string (routed to the Solver via conditional edge),
+    /// or a terminal "WORKFLOW_COMPLETE"/"ERROR:" string (blocked by the conditional edge).
+    /// Terminal paths also call YieldOutputAsync to mark workflow output.
     /// </summary>
     sealed class ManagerExecutor(MakerState state) : Executor<string, string>("Manager")
     {
@@ -154,18 +161,17 @@ namespace Maker
                 : $"Previous State: {state.Results[^1]}\n" +
                   $"Current Task: {currentStep}\n\n{CoTInstructions}";
 
-            await context.SendMessageAsync(prompt, cancellationToken);
             return prompt;
         }
     }
 
     /// <summary>
     /// [SLM] Voting_Solver – executes one step multiple times and applies majority voting.
-    /// Always sends a status back to Manager to drive the loop.
+    /// Returns a status string ("RETRY" or "RESOLVED: X") that routes back to Manager.
     /// </summary>
-    sealed class VotingExecutor(IChatClient slmClient, MakerState state) : Executor<string>("Voting_Solver")
+    sealed class VotingExecutor(IChatClient slmClient, MakerState state) : Executor<string, string>("Voting_Solver")
     {
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string prompt, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             if (state.Attempts == 0 && prompt.Contains("Current Task:"))
@@ -222,7 +228,7 @@ namespace Maker
                 else { status = "RETRY"; }
             }
 
-            await context.SendMessageAsync(status, cancellationToken);
+            return status;
         }
 
         private static string ExtractAnswer(string text)

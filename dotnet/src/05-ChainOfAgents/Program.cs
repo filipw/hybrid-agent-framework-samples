@@ -8,9 +8,9 @@
 // + the previous CU and outputs an updated CU.  The final cloud LLM Manager
 // receives the complete CU and synthesises the final answer.
 //
-// Backend configuration (see dotnet/.env.example):
+// Backend configuration (see dotnet/launchSettings.json.example):
 //   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-openai)
+//   LLM_BACKEND  — inference backend for the LLM role (default: azure-ai)
 // =============================================================================
 
 using HybridAgentDemos.Shared;
@@ -82,11 +82,11 @@ namespace ChainOfAgents
         string chunk,
         int workerIdx,
         int totalWorkers,
-        string name) : Executor<string>(name)
+        string name) : Executor<string, string>(name)
     {
         private const int MaxCuChars = 1500;
 
-        public override async ValueTask HandleAsync(
+        public override async ValueTask<string> HandleAsync(
             string previousCu, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string cu = previousCu.Trim();
@@ -112,7 +112,7 @@ namespace ChainOfAgents
             Console.WriteLine($"\n   [{name} ({workerIdx}/{totalWorkers})] CU length: {outputCu.Length} chars");
             Console.WriteLine($"   {new string('-', 60)}\n   {outputCu}\n   {new string('-', 60)}");
 
-            await context.SendMessageAsync(outputCu, cancellationToken: cancellationToken);
+            return outputCu;
         }
     }
 
