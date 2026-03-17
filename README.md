@@ -31,27 +31,26 @@ These demos illustrate different collaboration patterns to optimize for latency,
 
 ```bash
 cd python
-cp ../.env.example .env   # fill in your Azure OpenAI values
+cp .env.example .env # fill in your variables
 pip install -r requirements.txt
 ```
 
 ### Running
 
 ```bash
-python slm-default-llm-fallback/demo.py
-python router-agent/demo.py
-python maker/demo.py
-python minions/demo.py
-python chain-of-agents/demo.py
+python 01-slm-default-llm-fallback/demo.py
+python 02-router-agent/demo.py
+python 03-maker/demo.py
+python 04-minions/demo.py
+python 05-chain-of-agents/demo.py
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `AZURE_OPENAI_RESOURCE` | Azure OpenAI resource name |
-| `AZURE_OPENAI_KEY` | Azure OpenAI API key |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Chat completion deployment name (LLM role) |
+| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Deployment name for the LLM role in Azure AI Foundry |
 
 ---
 
