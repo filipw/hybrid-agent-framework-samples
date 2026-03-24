@@ -18,14 +18,22 @@ These demos illustrate different collaboration patterns to optimize for latency,
 
 ## Python
 
-> Uses [`agent-framework-mlx`](https://pypi.org/project/agent-framework-mlx/) and is optimised for Apple Silicon (macOS).
-> The SLM role is played by **Phi-4-mini-instruct** running locally via MLX.
+> The SLM role is played by **Phi-4-mini-instruct** running locally.
+> Two interchangeable local inference backends are supported, selected via the `LOCAL_BACKEND` environment variable:
+
+| Backend | `LOCAL_BACKEND` value | Use case |
+|---------|-----------------------|----------|
+| **MLX** | `mlx` *(default)* | Apple Silicon (macOS) via [`agent-framework-mlx`](https://pypi.org/project/agent-framework-mlx/) |
+| **Transformers** | `transformers` | Cross-platform (CUDA, MPS, CPU) via [HuggingFace Transformers](https://huggingface.co/docs/transformers/) |
+
+Demos use short model names (e.g. `Phi-4-mini-instruct-4bit`) that are automatically resolved to the correct backend-specific model path. You can also pass a fully-qualified HuggingFace model ID or override with the `LOCAL_MODEL_PATH` env var.
 
 ### Prerequisites
 
-- macOS with Apple Silicon
 - Python 3.11+
 - Azure CLI logged in (`az login`)
+- For the MLX backend: macOS with Apple Silicon
+- For the Transformers backend: any platform with PyTorch support (CUDA, MPS, or CPU)
 
 ### Setup
 
@@ -38,6 +46,16 @@ pip install -r requirements.txt
 ### Running
 
 ```bash
+# default (MLX backend)
+python 01-slm-default-llm-fallback/demo.py
+
+# use the Transformers backend instead
+LOCAL_BACKEND=transformers python 01-slm-default-llm-fallback/demo.py
+```
+
+All five demos follow the same pattern:
+
+```bash
 python 01-slm-default-llm-fallback/demo.py
 python 02-router-agent/demo.py
 python 03-maker/demo.py
@@ -47,10 +65,12 @@ python 05-chain-of-agents/demo.py
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Deployment name for the LLM role in Azure AI Foundry |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AZURE_AI_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint | |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Deployment name for the LLM role in Azure AI Foundry | |
+| `LOCAL_BACKEND` | Local inference backend (`mlx` or `transformers`) | `mlx` (default) |
+| `LOCAL_MODEL_PATH` | Override the HuggingFace model ID or local path for the SLM | per-backend default |
 
 ---
 

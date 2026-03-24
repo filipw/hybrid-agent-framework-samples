@@ -1,21 +1,28 @@
 import asyncio
 import os
+import sys
 from typing import Literal
 from agent_framework import (
-    ChatAgent, 
-    WorkflowBuilder, 
-    AgentRunUpdateEvent, 
+    ChatAgent,
+    WorkflowBuilder,
+    AgentRunUpdateEvent,
     Executor,
     handler,
     WorkflowContext,
     ChatMessage,
-    Role
+    Role,
+    BaseChatClient,
 )
 from agent_framework_azure_ai import AzureAIAgentClient
-from agent_framework_mlx import MLXChatClient, MLXGenerationConfig
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from local_models import create_local_client, LocalGenerationConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+load_dotenv()
 
 # 1. define the Routing Logic
 # using a few-shot prompt for classification
@@ -45,7 +52,7 @@ class ValidationState:
     route: Literal["WEAK", "STRONG"] = "WEAK"
 
 class RouterExecutor(Executor):
-    def __init__(self, client: MLXChatClient, state: ValidationState):
+    def __init__(self, client: BaseChatClient, state: ValidationState):
         super().__init__(id="Router_Control_Plane")
         self.client = client
         self.state = state
@@ -80,12 +87,13 @@ async def main():
     print("====================================================\n")
 
     # 2. Setup Clients
+    model_path = os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-4bit")
+
     # router uses low temp for deterministic classification
-    router_config = MLXGenerationConfig(temp=0.1, max_tokens=10)
-    router_client = MLXChatClient("mlx-community/Phi-4-mini-instruct-4bit", generation_config=router_config)
-    
+    router_client = create_local_client(model_path, LocalGenerationConfig(temp=0.1, max_tokens=10))
+
     # worker uses standard config
-    worker_client = MLXChatClient("mlx-community/Phi-4-mini-instruct-4bit")
+    worker_client = create_local_client(model_path)
     
     # strong Model (Azure)
     async with AzureCliCredential() as credential:

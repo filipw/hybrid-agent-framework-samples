@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import json
 import asyncio
@@ -7,7 +8,6 @@ from collections import Counter
 from typing import Any, List, MutableSequence, AsyncIterable
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from agent_framework_mlx import MLXChatClient, MLXGenerationConfig
 from agent_framework import (
     ChatAgent, 
     ChatMessage,
@@ -25,6 +25,9 @@ from agent_framework import (
 )
 from agent_framework_azure_ai import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from local_models import create_local_client, LocalGenerationConfig
 
 # Suppress warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -248,12 +251,16 @@ async def main():
             chat_client=ManagerClient(state)
         )
         
-        mlx_generation_config = MLXGenerationConfig(max_tokens=300, temp=0.8)
-        mlx_client = MLXChatClient(model_path="mlx-community/Phi-4-mini-instruct-4bit", generation_config=mlx_generation_config, message_preprocessor=ensure_stateless)
+        local_config = LocalGenerationConfig(max_tokens=300, temp=0.8)
+        local_client = create_local_client(
+            model_path=os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-4bit"),
+            generation_config=local_config,
+            message_preprocessor=ensure_stateless,
+        )
         
         solver = VotingExecutor(
             name="Voting_Solver", 
-            client=mlx_client, 
+            client=local_client,
             state=state
         )
 

@@ -1,11 +1,11 @@
 import os
+import sys
 import asyncio
 import logging
 from typing import List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from agent_framework_mlx import MLXChatClient, MLXGenerationConfig
 from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
@@ -18,6 +18,9 @@ from agent_framework import (
 )
 from agent_framework_azure_ai import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from local_models import create_local_client, LocalGenerationConfig
 
 # -------------------------------------------------------------------------
 # Based on: "Chain of Agents: Large Language Models Collaborating on 
@@ -35,7 +38,6 @@ from azure.identity.aio import AzureCliCredential
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 logging.getLogger("agent_framework").setLevel(logging.ERROR)
-
 load_dotenv()
 
 # Cap on the Communication Unit length passed between workers.  Prevents
@@ -60,7 +62,7 @@ def truncate_cu(cu: str, limit: int = MAX_CU_CHARS) -> str:
 class WorkerExecutor(Executor):
     """Worker agent (Stage 1 of CoA): reads a chunk, updates the CU, passes it on."""
     
-    def __init__(self, name: str, client: MLXChatClient, query: str, chunk: str, worker_idx: int, total_workers: int):
+    def __init__(self, name: str, client, query: str, chunk: str, worker_idx: int, total_workers: int):
         super().__init__(id=name)
         self.client = client
         self.query = query
@@ -128,11 +130,11 @@ async def main():
     print(f"📄 Document split into {len(document_chunks)} sequential chunks.\n")
     
     # 1. Local SLM for the Workers (Stage 1)
-    mlx_config = MLXGenerationConfig(max_tokens=400, temp=0.1, repetition_penalty=1.15)
-    mlx_client = MLXChatClient(
-        model_path="mlx-community/Phi-4-mini-instruct-8bit",
-        generation_config=mlx_config,
-        message_preprocessor=ensure_stateless
+    local_config = LocalGenerationConfig(max_tokens=400, temp=0.1, repetition_penalty=1.15)
+    local_client = create_local_client(
+        model_path=os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-8bit"),
+        generation_config=local_config,
+        message_preprocessor=ensure_stateless,
     )
     
     # 2. Cloud LLM for the Manager (Stage 2)
@@ -157,7 +159,7 @@ async def main():
         for i, chunk in enumerate(document_chunks):
             worker = WorkerExecutor(
                 name=f"Worker_{i+1}", 
-                client=mlx_client, 
+                client=local_client,
                 query=query, 
                 chunk=chunk,
                 worker_idx=i+1,
