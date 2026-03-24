@@ -2,4 +2,6 @@ python-dotenv
 agent-framework==1.0.0b260123
 agent-framework-azure-ai==1.0.0b260123
 agent-framework-mlx==0.4.1
-
+azure-ai-projects==2.0.0b3
+azure-ai-agents==1.2.0b5
+opentelemetry-semantic-conventions-ai==0.4.13
