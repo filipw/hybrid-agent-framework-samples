@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+
+      - name: Create virtual environment
+        run: |
+          if [ -d ".venv" ]; then
+            echo "WARNING: .venv already exists – skipping creation"
+          else
+            python -m venv .venv
+          fi
+
+      - name: Install Python dependencies
+        working-directory: python
+        run: |
+          source ../.venv/bin/activate
+          pip install --quiet --upgrade pip
+          # Skip agent-framework-mlx — Apple Silicon only
+          grep -v 'agent-framework-mlx' requirements.txt \
+            | pip install --quiet -r /dev/stdin
+
+      - name: Python syntax check
+        working-directory: python
+        run: |
+          source ../.venv/bin/activate
+          find . -name "*.py" \
+            | xargs python -m py_compile
+          echo "Syntax OK"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - name: .NET restore & build
+        working-directory: dotnet
+        run: |
+          dotnet build HybridAgentDemos.slnx \
+            --configuration Release \
+            --nologo \
+            -v minimal
