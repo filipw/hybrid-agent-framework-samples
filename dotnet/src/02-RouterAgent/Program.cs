@@ -1,6 +1,6 @@
 // =============================================================================
 // Predictive Router Pattern
-// Based on: arXiv:2501.01818
+// Based on: arXiv:2406.18665
 //
 // A dedicated router classifies each query as WEAK (simple/factual) or
 // STRONG (complex/reasoning).  WEAK queries go to the local SLM; STRONG
@@ -19,7 +19,7 @@ using RouterAgent;
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 Console.WriteLine("====================================================");
-Console.WriteLine(" Predictive Router Pattern (arXiv:2501.01818)");
+Console.WriteLine(" Predictive Router Pattern (arXiv:2406.18665)");
 Console.WriteLine("====================================================\n");
 
 var routerClient = BackendFactory.CreateSlm();

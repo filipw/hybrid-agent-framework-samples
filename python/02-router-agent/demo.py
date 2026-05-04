@@ -83,7 +83,7 @@ validation_state = ValidationState()
 
 async def main():
     print("====================================================")
-    print(" predictive-router-pattern (arXiv:2501.01818)")
+    print(" predictive-router-pattern (arXiv:2406.18665)")
     print("====================================================\n")
 
     # 2. Setup Clients
