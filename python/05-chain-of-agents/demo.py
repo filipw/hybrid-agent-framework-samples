@@ -2,21 +2,16 @@ import os
 import sys
 import asyncio
 import logging
-from typing import List
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     Executor,
     handler,
-    Role,
-    AgentRunUpdateEvent,
-    AgentExecutorResponse,
-    ChatMessage
+    Message,
 )
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework_foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -28,7 +23,7 @@ from local_models import create_local_client, LocalGenerationConfig
 #
 # CoA splits a long document into chunks and assigns each to a Worker agent.
 # Workers process chunks sequentially, each receiving the previous worker's
-# "Communication Unit" (CU) — a running summary of findings so far — and
+# "Communication Unit" (CU) - a running summary of findings so far - and
 # outputting an updated CU that incorporates its own chunk.  A Manager agent
 # receives the final CU and synthesizes it into the answer.
 #
@@ -72,34 +67,30 @@ class WorkerExecutor(Executor):
 
     @handler
     async def process_chunk(self, message: str, ctx: WorkflowContext[str]):
-        # Extract the CU text from the previous worker's output
-        if hasattr(message, "agent_response") and hasattr(message.agent_response, "text"):
-            message = message.agent_response.text or ""
-
         previous_cu = truncate_cu(message.strip())
         
-        # Handle the first worker (no previous CU yet — paper: CU_0 = empty)
+        # Handle the first worker (no previous CU yet - paper: CU_0 = empty)
         if previous_cu:
             cu_section = f"Here is the summary of the previous source text: {previous_cu}"
         else:
-            cu_section = "There is no previous summary yet — this is the first chunk."
+            cu_section = "There is no previous summary yet - this is the first chunk."
 
-        # Worker prompt — adapted from the paper's query-based template (Table 5).
-        # The query is presented as context ("will be answered later") so the
-        # worker focuses on extracting all facts rather than filtering by keyword.
+        # Worker prompt - directly from the paper's query-based template (Table 9).
+        # The query is shown as future context so the worker extracts all facts,
+        # not just those that appear relevant at this stage.
         prompt = (
             f"{self.chunk}\n\n"
             f"{cu_section}\n\n"
             f"Question that will be answered later: {self.query}\n\n"
-            "Summarize ALL events from the current source text together with the previous summary. "
-            "Include every event with its timestamp and details — do not skip events even if they "
-            "seem unrelated to the question. Do NOT invent or infer any events that are not "
-            "explicitly stated in the source text or previous summary. "
-            "Another agent will use your summary to answer the question. "
+            "You need to read the current source text and the summary of the previous source text "
+            "(if any) and generate a summary to include them both. "
+            "Later, this summary will be used for other agents to answer the question. "
+            "So please write the summary that can include the evidence for answering the question. "
+            "Do NOT invent or infer anything not explicitly stated in the source text or previous summary. "
             "Output only the updated factual summary, 3-5 sentences, no commentary."
         )
         
-        response = await self.client.get_response([ChatMessage(role=Role.USER, text=prompt)])
+        response = await self.client.get_response([Message("user", [prompt])])
         output_text = response.messages[-1].text.strip()
         
         print(f"\n   [{self.id} ({self.worker_idx}/{self.total_workers})] Chunk processed. CU length: {len(output_text)} chars")
@@ -109,52 +100,65 @@ class WorkerExecutor(Executor):
         await ctx.send_message(output_text)
 
 
+class ManagerExecutor(Executor):
+    """Manager agent (Stage 2 of CoA): receives the final CU and synthesizes the answer."""
+
+    def __init__(self, name: str, client, query: str):
+        super().__init__(id=name)
+        self.client = client
+        self.query = query
+
+    @handler
+    async def synthesize(self, message: str, ctx: WorkflowContext[str]):
+        final_cu = message.strip()
+
+        # CU + question + "Answer:" nudge for the manager
+        prompt = (
+            "The following are given passages. However, the source text is too long "
+            "and has been summarized. You need to answer based on the summary:\n\n"
+            f"{final_cu}\n\n"
+            f"Question: {self.query}\n\n"
+            "Answer:"
+        )
+
+        print(f"\n\n   ☁️  {self.id}:\n   ", end="", flush=True)
+        response = await self.client.get_response([Message("user", [prompt])])
+        print(response.messages[-1].text.strip())
+
+
 async def main():
     print("===============================================================")
     print("   Chain of Agents (CoA) Pattern (arXiv:2406.02818)")
     print("===============================================================\n")
 
     # Load and chunk the document
-    text_file_path = os.path.join(os.path.dirname(__file__), "security_logs.txt")
+    text_file_path = os.path.join(os.path.dirname(__file__), "quantum_mechanics_history.txt")
     with open(text_file_path, "r", encoding="utf-8") as f:
         full_text = f.read()
         
-    # Split into small chunks (2 lines each) — one worker per chunk
+    # Split into paragraphs - one worker per pair of paragraphs
     lines = [l for l in full_text.strip().split("\n") if l.strip()]
     chunk_size = 2
     document_chunks = ["\n".join(lines[i:i+chunk_size]) for i in range(0, len(lines), chunk_size)]
 
-    query = "Create a brief chronological timeline of the ransomware attack and its resolution. Include the root cause."
+    query = "How did quantum mechanics evolve from Planck's initial hypothesis to a complete mathematical framework? Trace the key contributors and what each one added."
     
     print(f"❔ Query: {query}")
     print(f"📄 Document split into {len(document_chunks)} sequential chunks.\n")
     
     # 1. Local SLM for the Workers (Stage 1)
-    local_config = LocalGenerationConfig(max_tokens=400, temp=0.1, repetition_penalty=1.15)
+    local_config = LocalGenerationConfig(max_tokens=250, temp=0.1, repetition_penalty=1.15)
     local_client = create_local_client(
-        model_path=os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-8bit"),
+        model_path=os.environ.get("LOCAL_MODEL_PATH", "phi-4-8bit"),
         generation_config=local_config,
         message_preprocessor=ensure_stateless,
     )
     
     # 2. Cloud LLM for the Manager (Stage 2)
     async with AzureCliCredential() as credential:
-        azure_client = AzureAIAgentClient(credential=credential)
-        manager = azure_client.as_agent(
-            name="Cloud_Manager",
-            instructions=(
-                "You are the Manager Agent in a Chain of Agents workflow. "
-                "The source text was too long, so worker agents read it in chunks and produced "
-                "the summary you will receive. Treat this summary as your source material — "
-                "do not critique it or point out inconsistencies in it. "
-                "Use it to directly answer the following question.\n\n"
-                f"Question: {query}"
-            )
-        )
+        manager = ManagerExecutor(name="Cloud_Manager", client=FoundryChatClient(project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"), model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"), credential=credential), query=query)
         
         # 3. Build the sequential worker chain → manager
-        builder = WorkflowBuilder()
-        
         workers = []
         for i, chunk in enumerate(document_chunks):
             worker = WorkerExecutor(
@@ -166,8 +170,8 @@ async def main():
                 total_workers=len(document_chunks)
             )
             workers.append(worker)
-            
-        builder.set_start_executor(workers[0])
+
+        builder = WorkflowBuilder(start_executor=workers[0])
         
         for i in range(len(workers) - 1):
             builder.add_edge(source=workers[i], target=workers[i+1])
@@ -177,22 +181,13 @@ async def main():
         workflow = builder.build()
         
         print("🚀 Starting Chain...\n")
-        current_agent = None
-        
+
         # Kick off with an empty CU (paper Algorithm 1: CU_0 ← empty string)
-        async for event in workflow.run_stream(""):
-            if isinstance(event, AgentRunUpdateEvent):
-                # Stream only the Manager's final answer to the console
-                if event.executor_id == "Cloud_Manager":
-                    if current_agent != "Cloud_Manager":
-                        current_agent = "Cloud_Manager"
-                        print(f"\n\n   ☁️  {current_agent}: \n   ", end="", flush=True)
-                    if event.data and event.data.text:
-                        print(event.data.text, end="", flush=True)
-                        
+        async for _ in workflow.run("", stream=True):
+            pass
+
         print("\n\n✅ Workflow Complete.")
         
-        await azure_client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

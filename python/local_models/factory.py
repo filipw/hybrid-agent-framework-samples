@@ -3,27 +3,24 @@ from typing import Optional, Callable
 from agent_framework import BaseChatClient
 from .config import LocalGenerationConfig
 
-# Short model name -> full model path per backend.
 _MODEL_REGISTRY: dict[str, dict[str, str]] = {
-    "Phi-4-mini-instruct-4bit": {
+    "phi-4-4bit": {
         "mlx": "mlx-community/Phi-4-mini-instruct-4bit",
-        "transformers": "microsoft/Phi-4-mini-instruct",
+        "foundry_local": "phi-4-mini",
     },
-    "Phi-4-mini-instruct-8bit": {
+    "phi-4-8bit": {
         "mlx": "mlx-community/Phi-4-mini-instruct-8bit",
-        "transformers": "microsoft/Phi-4-mini-instruct",
+        "foundry_local": "phi-4-mini",
     },
 }
 
-
 def _resolve_model_path(model_path: str, backend: str) -> str:
-    """Resolve a model path for the chosen backend.
+    """Resolve a model name for the chosen backend.
 
-    Accepts either a short name from the registry (e.g. "Phi-4-mini-instruct-4bit")
-    or a fully-qualified HuggingFace model ID. Short names are expanded to the
-    appropriate backend-specific path. Fully-qualified paths are returned as-is.
+    Accepts either a short name from the registry (e.g. "phi-4-4bit") or a
+    fully-qualified model ID / alias passed directly to the backend.
     """
-    if model_path in _MODEL_REGISTRY:
+    if model_path in _MODEL_REGISTRY and backend in _MODEL_REGISTRY[model_path]:
         return _MODEL_REGISTRY[model_path][backend]
     return model_path
 
@@ -38,16 +35,15 @@ def create_local_client(
 
     Supported backends:
         - "mlx" (default): Uses agent-framework-mlx (Apple Silicon only)
-        - "transformers": Uses HuggingFace transformers (cross-platform)
+        - "foundry_local": Uses Foundry Local via agent-framework-foundry-local (cross-platform)
 
-    The *model_path* can be a short registry name (e.g. "Phi-4-mini-instruct-4bit")
-    which is automatically resolved to the correct backend-specific model, or a
-    fully-qualified HuggingFace model ID.
+    The *model_path* can be a short registry name (e.g. "phi-4-4bit") which is
+    automatically resolved to the correct backend-specific alias or model ID.
 
     Args:
-        model_path: HuggingFace model ID or local path.
+        model_path: Short registry name or backend-specific model ID / alias.
         generation_config: Backend-agnostic generation settings.
-        message_preprocessor: Optional callback to transform messages before inference.
+        message_preprocessor: Optional message transform callback (mlx only; ignored for foundry_local).
     """
     backend = os.environ.get("LOCAL_BACKEND", "mlx").lower()
     config = generation_config or LocalGenerationConfig()
@@ -58,10 +54,10 @@ def create_local_client(
 
     if backend == "mlx":
         return _create_mlx_client(resolved_path, config, message_preprocessor)
-    elif backend == "transformers":
-        return _create_transformers_client(resolved_path, config, message_preprocessor)
+    elif backend == "foundry_local":
+        return _create_foundry_local_client(resolved_path, config)
     else:
-        raise ValueError(f"Unknown LOCAL_BACKEND: '{backend}'. Supported: 'mlx', 'transformers'")
+        raise ValueError(f"Unknown LOCAL_BACKEND: '{backend}'. Supported: 'mlx', 'foundry_local'")
 
 
 def _create_mlx_client(
@@ -86,15 +82,10 @@ def _create_mlx_client(
     )
 
 
-def _create_transformers_client(
-    model_path: str,
+def _create_foundry_local_client(
+    model_alias: str,
     config: LocalGenerationConfig,
-    message_preprocessor: Optional[Callable],
 ) -> BaseChatClient:
-    from .transformers_backend import TransformersChatClient
+    from agent_framework_foundry_local import FoundryLocalClient
 
-    return TransformersChatClient(
-        model_path=model_path,
-        generation_config=config,
-        message_preprocessor=message_preprocessor,
-    )
+    return FoundryLocalClient(model=model_alias)

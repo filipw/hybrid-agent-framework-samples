@@ -3,24 +3,24 @@ import os
 import sys
 from typing import Literal
 from agent_framework import (
-    ChatAgent,
+    Agent,
     WorkflowBuilder,
-    AgentRunUpdateEvent,
+    WorkflowEvent,
+    AgentResponseUpdate,
+    AgentExecutorResponse,
+    AgentResponse,
     Executor,
     handler,
     WorkflowContext,
-    ChatMessage,
-    Role,
+    Message,
     BaseChatClient,
 )
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework_foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from local_models import create_local_client, LocalGenerationConfig
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 load_dotenv()
 
@@ -42,7 +42,7 @@ Output: ROUTE: STRONG
 Input: "Summarize this short text."
 Output: ROUTE: WEAK
 
-Input: "Explain the implications of quantum computing on modern cryptography."
+Input: "Explain the mathematical difference between matrix mechanics and wave mechanics in quantum mechanics."
 Output: ROUTE: STRONG
 
 You must output ONLY 'ROUTE: WEAK' or 'ROUTE: STRONG'. Do not answer the user query.
@@ -58,10 +58,10 @@ class RouterExecutor(Executor):
         self.state = state
 
     @handler
-    async def route_query(self, query: str, ctx: WorkflowContext[str]):
+    async def route_query(self, query: str, ctx: WorkflowContext[AgentExecutorResponse]):
         msgs = [
-            ChatMessage(role=Role.SYSTEM, text=ROUTER_INSTRUCTIONS),
-            ChatMessage(role=Role.USER, text=f"Input: \"{query}\"\nOutput:")
+            Message("system", [ROUTER_INSTRUCTIONS]),
+            Message("user", [f"Input: \"{query}\"\nOutput:"])
         ]
         
         response = await self.client.get_response(msgs)
@@ -69,12 +69,17 @@ class RouterExecutor(Executor):
         
         if "ROUTE: STRONG" in decision_text:
             self.state.route = "STRONG"
-            print(f"   [🔀 Decision]: STRONG (Complex Query -> Azure)")
+            print("   [🔀 Decision]: STRONG (Complex Query -> Azure)")
         else:
             self.state.route = "WEAK"
-            print(f"   [🔀 Decision]: WEAK (Simple/Factual -> Local)")
+            print("   [🔀 Decision]: WEAK (Simple/Factual -> Local)")
             
-        await ctx.send_message(query)
+        user_msg = Message("user", [query])
+        await ctx.send_message(AgentExecutorResponse(
+            executor_id=self.id,
+            agent_response=AgentResponse(messages=[user_msg]),
+            full_conversation=[user_msg],
+        ))
 
 def is_route_strong(msg: object) -> bool: return validation_state.route == "STRONG"
 def is_route_weak(msg: object) -> bool: return validation_state.route == "WEAK"
@@ -83,41 +88,36 @@ validation_state = ValidationState()
 
 async def main():
     print("====================================================")
-    print(" predictive-router-pattern (arXiv:2406.18665)")
+    print(" predictive-router-pattern (arXiv:2501.01818)")
     print("====================================================\n")
 
     # 2. Setup Clients
-    model_path = os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-4bit")
+    model_path = os.environ.get("LOCAL_MODEL_PATH", "phi-4-4bit")
 
-    # router uses low temp for deterministic classification
-    router_client = create_local_client(model_path, LocalGenerationConfig(temp=0.1, max_tokens=10))
-
-    # worker uses standard config
-    worker_client = create_local_client(model_path)
+    # single local client shared by router and worker
+    local_client = create_local_client(model_path, LocalGenerationConfig(temp=0.1))
     
     # strong Model (Azure)
     async with AzureCliCredential() as credential:
-        azure_client = AzureAIAgentClient(credential=credential)
-        
         # 3. Define Agents
-        router_agent = RouterExecutor(client=router_client, state=validation_state)
+        router_agent = RouterExecutor(client=local_client, state=validation_state)
 
         # weak Worker: The 'Mw' model (Runs locally)
-        weak_agent = ChatAgent(
-            name="Weak_Model_Worker",
+        weak_agent = Agent(
+            local_client,
             instructions="You are a concise assistant. Answer the user's question directly.",
-            chat_client=worker_client
+            name="Weak_Model_Worker",
         )
 
         # strong Worker: The 'Ms' model (Runs in Cloud)
-        strong_agent = azure_client.as_agent(
+        strong_agent = Agent(
+            FoundryChatClient(project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"), model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"), credential=credential),
             name="Strong_Model_Worker",
             instructions="You are an expert assistant. Provide detailed, reasoning-heavy answers.",
         )
 
         # 4. build the Workflow Graph
-        builder = WorkflowBuilder()
-        builder.set_start_executor(router_agent)
+        builder = WorkflowBuilder(start_executor=router_agent)
 
         builder.add_edge(
             source=router_agent,
@@ -136,10 +136,10 @@ async def main():
         # 5. run two demo queries
         queries = [
             # example 1: Complex -> Should route to Strong
-            "Explain the implications of quantum computing on cryptography",
+            "Explain shortly the implications of quantum computing on cryptography",
             
             # example 2: Simple -> Should route to Weak
-            "What are the three primary colors?"
+            "Write a haiku about ice hockey"
         ]
 
         for query in queries:
@@ -150,8 +150,8 @@ async def main():
             validation_state.route = "WEAK"
 
             current_agent = None
-            async for event in workflow.run_stream(query):
-                if isinstance(event, AgentRunUpdateEvent):
+            async for event in workflow.run(query, stream=True):
+                if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                     # print agent name changes
                     if event.executor_id != current_agent:
                         if current_agent: print() 
@@ -163,7 +163,6 @@ async def main():
                         print(event.data.text, end="", flush=True)
             print("\n" + "="*50)
             
-        await azure_client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

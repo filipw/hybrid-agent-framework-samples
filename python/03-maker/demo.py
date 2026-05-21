@@ -9,21 +9,22 @@ from typing import Any, List, MutableSequence, AsyncIterable
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from agent_framework import (
-    ChatAgent, 
-    ChatMessage,
-    ChatResponseUpdate, 
+    Agent,
+    Message,
+    ChatResponseUpdate,
     WorkflowBuilder, 
     WorkflowContext,
     Executor,
     handler,
-    Role,
     BaseChatClient,
     ChatResponse,
-    ChatOptions,
-    AgentRunUpdateEvent,
-    AgentExecutorResponse
+    ResponseStream,
+    AgentResponseUpdate,
+    AgentExecutorResponse,
+    AgentResponse,
+    Content,
 )
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework_foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -83,25 +84,24 @@ class ManagerClient(BaseChatClient):
         
         return "ERROR: No steps remaining."
 
-    async def _inner_get_response(
+    def _inner_get_response(
         self,
         *,
-        messages: MutableSequence[ChatMessage],
+        messages: MutableSequence[Message],
+        stream: bool = False,
         options: dict[str, Any],
         **kwargs: Any,
-    ) -> ChatResponse:
-        text = await self._generate_text()
-        return ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text=text)])
+    ):
+        if stream:
+            async def _stream():
+                text = await self._generate_text()
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text=text)])
+            return ResponseStream(_stream())
 
-    async def _inner_get_streaming_response(
-        self,
-        *,
-        messages: MutableSequence[ChatMessage],
-        options: dict[str, Any],
-        **kwargs: Any,
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        text = await self._generate_text()
-        yield ChatResponseUpdate(role=Role.ASSISTANT, text=text)
+        async def _non_stream():
+            text = await self._generate_text()
+            return ChatResponse(messages=[Message("assistant", [text])])
+        return _non_stream()
 
 class VotingExecutor(Executor):
     def __init__(self, name: str, client: BaseChatClient, state: MakerState):
@@ -122,20 +122,20 @@ class VotingExecutor(Executor):
         return "PARSE_ERROR"
 
     @handler
-    async def handle_agent_response(self, message: AgentExecutorResponse, ctx: WorkflowContext[ChatMessage]): 
+    async def handle_agent_response(self, message: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]): 
         await self._resolve_step(message.agent_response.text or "", ctx)
 
     @handler
-    async def handle_chat_message(self, message: ChatMessage, ctx: WorkflowContext[ChatMessage]):
+    async def handle_chat_message(self, message: Message, ctx: WorkflowContext[AgentExecutorResponse]):
         await self._resolve_step(message.text or "", ctx)
 
-    async def _resolve_step(self, input_text: str, ctx: WorkflowContext[ChatMessage]):
+    async def _resolve_step(self, input_text: str, ctx: WorkflowContext[AgentExecutorResponse]):
         
         if self.state.attempts == 0 and "Current Task:" in input_text:
             task_line = input_text.split("Current Task:")[1].split("\n")[0].strip()
             print(f"\n⏳ Processing Step {self.state.current_step_idx + 1}: {task_line}")
 
-        msgs = [ChatMessage(role=Role.USER, text=input_text)]
+        msgs = [Message("user", [input_text])]
         response = await self.client.get_response(msgs)
 
         ans = self._extract_answer(response.messages[-1].text or "")
@@ -145,7 +145,7 @@ class VotingExecutor(Executor):
         if ans == "PARSE_ERROR":
             print(f"   ❌ Attempt {self.state.attempts}: Parse Error")
             if self.state.attempts >= self.state.max_attempts:
-                 print(f"   ⚠️ ABORTING STEP: Parse Error Limit Reached")
+                 print("   ⚠️ ABORTING STEP: Parse Error Limit Reached")
                  status_msg = "RESOLVED: ERROR"
                  self._commit_step("ERROR")
             else:
@@ -173,7 +173,12 @@ class VotingExecutor(Executor):
             else:
                 status_msg = "RETRY"
 
-        await ctx.send_message(ChatMessage(role=Role.ASSISTANT, text=status_msg))
+        assistant_msg = Message("assistant", [status_msg])
+        await ctx.send_message(AgentExecutorResponse(
+            executor_id=self.id,
+            agent_response=AgentResponse(messages=[assistant_msg]),
+            full_conversation=[Message("user", [input_text]), assistant_msg],
+        ))
 
     def _commit_step(self, result: str):
         self.state.results.append(result)
@@ -183,24 +188,8 @@ class VotingExecutor(Executor):
         if self.state.current_step_idx >= len(self.state.steps):
             self.state.is_complete = True
 
-class DecompositionPlan(BaseModel):
-    steps: List[str | dict] = Field(description="A list of imperative instructions (e.g. 'Add 5 and 3'). Do NOT include results (e.g. '5+3=8').")
-
 def create_transitions(state: MakerState):
     def parse_plan(response: AgentExecutorResponse) -> bool:
-        # Check for structured output first
-        if getattr(response.agent_response, "value", None) and isinstance(response.agent_response.value, DecompositionPlan):
-             raw_steps = response.agent_response.value.steps
-             # Normalize dictionary steps if necessary
-             state.steps = [
-                 step.get("content", step.get("step", str(step))) if isinstance(step, dict) else str(step) 
-                 for step in raw_steps
-             ]
-             print("\n📋 DECOMPOSITION PLAN (Structured):")
-             print(json.dumps(state.steps, indent=2))
-             print("-" * 40)
-             return True
-
         text = response.agent_response.text or "[]"
         clean_text = text.replace("```json", "").replace("```", "").strip()
         try:
@@ -229,7 +218,8 @@ async def main():
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            FoundryChatClient(project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"), model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME"), credential=credential),
             name="Cloud_Planner",
             instructions=(
                 "You are a decomposition engine. Your goal is to break a complex user request into a sequence of atomic, actionable steps for a worker agent to execute one by one.\n\n"
@@ -239,21 +229,20 @@ async def main():
                 "3. FORWARD REFERENCES: Refer to the output of previous steps as 'the result', 'the output', or 'the previous state'. Do not assume you know what the value is.\n"
                 "4. DATA FIDELITY: Preserve specific names, numbers, and entities from the user's request exactly.\n"
                 "5. NO PREDICTIONS: Do not predict, simulate, or include the outcome of the steps in the instructions.\n"
-                "6. FORMAT: Return a list of strings where each string is an imperative instruction.\n"
+                "6. FORMAT: Return ONLY a JSON array of strings, e.g. [\"step 1\", \"step 2\"]. No markdown, no extra text.\n"
                 "7. NO EQUALS SIGNS: Do not use '=' to show results.\n"
             ),
-            default_options={"response_format": DecompositionPlan},
         ) as cloud_planner,
     ):
-        manager = ChatAgent(
-            name="Manager", 
-            instructions="Orchestrator", 
-            chat_client=ManagerClient(state)
+        manager = Agent(
+            ManagerClient(state),
+            instructions="Orchestrator",
+            name="Manager",
         )
         
         local_config = LocalGenerationConfig(max_tokens=300, temp=0.8)
         local_client = create_local_client(
-            model_path=os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-4bit"),
+            model_path=os.environ.get("LOCAL_MODEL_PATH", "phi-4-4bit"),
             generation_config=local_config,
             message_preprocessor=ensure_stateless,
         )
@@ -264,25 +253,24 @@ async def main():
             state=state
         )
 
-        builder = WorkflowBuilder()
-        builder.set_start_executor(cloud_planner)
+        builder = WorkflowBuilder(start_executor=cloud_planner)
         builder.add_edge(source=cloud_planner, target=manager, condition=t_parse)
         builder.add_edge(source=manager, target=solver, condition=t_to_solver)
         builder.add_edge(source=solver, target=manager, condition=t_to_manager)
 
         workflow = builder.build()
 
-        user_query = "Calculate ((5 + 3) * 10) / 2. Then divide this result by 4 and add 6."
+        # the answer is 14
+        user_query = "Calculate ((((5 + 3) * 10) / 2) / 4) + 4" 
 
         print(f"🚀 Query: {user_query}")
 
-        async for event in workflow.run_stream(user_query):
-            if isinstance(event, AgentRunUpdateEvent):
+        async for event in workflow.run(user_query, stream=True):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 if event.executor_id == "Manager" and "WORKFLOW_COMPLETE" in (event.data.text or ""):
-                    print(f"\n==========================================")
+                    print("\n==========================================")
                     print(f"🤖 Final State: {event.data.text.split('WORKFLOW_COMPLETE: ')[1]}")
-                    print(f"==========================================")
-                    break
+                    print("==========================================")
 
 if __name__ == "__main__":
     asyncio.run(main())

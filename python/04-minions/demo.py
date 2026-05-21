@@ -5,21 +5,23 @@ import asyncio
 import logging
 import time
 import re
-from typing import List
+from typing import Dict, List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from agent_framework import (
+    Agent,
     BaseChatClient,
-    ChatMessage,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     Executor,
     handler,
-    Role,
-    AgentRunUpdateEvent,
+    WorkflowEvent,
+    AgentResponseUpdate,
     AgentExecutorResponse,
+    AgentResponse,
 )
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework_foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -30,7 +32,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 logging.getLogger("agent_framework").setLevel(logging.ERROR)
 load_dotenv()
 
-LOCAL_MODEL_PATH = os.environ.get("LOCAL_MODEL_PATH", "Phi-4-mini-instruct-8bit")
+LOCAL_MODEL_PATH = os.environ.get("LOCAL_MODEL_PATH", "phi-4-8bit")
 
 with open("quantum_mechanics_history.txt", "r", encoding="utf-8") as f:
     QUANTUM_MECHANICS_HISTORY = f.read()
@@ -38,7 +40,7 @@ with open("quantum_mechanics_history.txt", "r", encoding="utf-8") as f:
 class MinionsState(BaseModel):
     user_query: str = ""
     jobs: List[str] = Field(default_factory=list)
-    results: List[str] = Field(default_factory=list)
+    results: Dict[str, List[str]] = Field(default_factory=dict)
     final_answer: str = ""
     local_chars_processed: int = 0
 
@@ -60,15 +62,17 @@ Task: Based ONLY on the text in the 'Context' above, {job}
 DECOMPOSER_INSTRUCTIONS = """You are a task decomposition expert. Your job is to break down a user's complex query into simple, atomic extraction tasks.
 
 Rules:
-- Each task should be a single, focused question that can be answered from a text chunk
+- Each task should be a single, focused question that can be answered from a text chunk. 
 - Tasks should be specific and actionable (e.g., "Find X and the year Y") and intended for finding information in the attached text
-- Create 3-7 tasks depending on the complexity of the query
+- Tasks should not depend on other tasks
+- Tasks should be self contained (possible to execute without knowing the original query). Do not refer to objects and subjects from the original query using "it/he/she", but mention them by name explicitly.
+- Create 2-4 tasks depending on the complexity of the query
 - Return ONLY a JSON array of task strings, nothing else
 - Format: ["task 1", "task 2", "task 3"]"""
 
-SYNTHESIZER_INSTRUCTIONS = """You are a science historian. You have received a list of facts extracted from a document about the history of physics.
+SYNTHESIZER_INSTRUCTIONS = """You are a document writer. You have received a list of facts extracted from a document.
 - Your task is to synthesize this information into a clear, structured answer to the user's original query.
-- Organize the information by scientist.
+- Organize the information.
 - Do not mention the extraction process, just provide the final answer."""
 
 EVALUATOR_INSTRUCTIONS_TEMPLATE = """You are an expert evaluator of AI-generated responses. Your task is to assess the quality of an answer given the original document, user query, and the generated response.
@@ -111,7 +115,7 @@ class LocalWorkerExecutor(Executor):
         self.chunk_size = chunk_size
 
     @handler
-    async def handle_decomposer_response(self, message: AgentExecutorResponse, ctx: WorkflowContext[str]):
+    async def handle_decomposer_response(self, message: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]):
         jobs = self.state.jobs
         chunks = [self.document[i:i + self.chunk_size] for i in range(0, len(self.document), self.chunk_size)]
 
@@ -126,7 +130,7 @@ class LocalWorkerExecutor(Executor):
                 self.state.local_chars_processed += len(prompt)
 
                 response = await self.client.get_response(
-                    [ChatMessage(role=Role.USER, text=prompt)]
+                    [Message("user", [prompt])]
                 )
                 result = (response.messages[-1].text or "").strip()
 
@@ -135,7 +139,7 @@ class LocalWorkerExecutor(Executor):
 
                 if not is_failure and result:
                     print(f"  - SUCCESS: Found relevant result in chunk {i + 1}!")
-                    self.state.results.append(result)
+                    self.state.results.setdefault(job, []).append(result)
                 else:
                     print(f"  - No relevant info found in chunk {i + 1}.")
 
@@ -143,18 +147,34 @@ class LocalWorkerExecutor(Executor):
 
         duration = time.time() - start_time
         print(f"Local job execution finished in {duration:.2f}s.")
-        print(f"Filtered results to be sent to RemoteLM: {self.state.results}")
+        total_results = sum(len(v) for v in self.state.results.values())
+        print(f"Filtered results to be sent to RemoteLM: {total_results} answers across {len(self.state.results)} jobs")
+        print(f"  {self.state.results}")
 
         if self.state.results:
-            results_str = "\n".join([f"- {res}" for res in self.state.results])
+            results_parts = []
+            for job, answers in self.state.results.items():
+                answers_str = "\n".join([f"  - {a}" for a in answers])
+                results_parts.append(f"Job: {job}\nAnswers:\n{answers_str}")
+            results_str = "\n\n".join(results_parts)
             synthesis_request = (
                 f"Original Query: {self.state.user_query}\n\n"
-                f"Extracted Information:\n{results_str}\n\n"
+                f"Extracted Information (grouped by task):\n{results_str}\n\n"
                 f"Please provide a final, synthesized answer."
             )
-            await ctx.send_message(synthesis_request)
+            user_msg = Message("user", [synthesis_request])
+            await ctx.send_message(AgentExecutorResponse(
+                executor_id=self.id,
+                agent_response=AgentResponse(messages=[user_msg]),
+                full_conversation=[user_msg],
+            ))
         else:
-            await ctx.send_message("NO_RESULTS")
+            no_result_msg = Message("assistant", ["NO_RESULTS"])
+            await ctx.send_message(AgentExecutorResponse(
+                executor_id=self.id,
+                agent_response=AgentResponse(messages=[no_result_msg]),
+                full_conversation=[no_result_msg],
+            ))
 
 
 class EvalFormatterExecutor(Executor):
@@ -165,7 +185,7 @@ class EvalFormatterExecutor(Executor):
         self.state = state
 
     @handler
-    async def format_for_eval(self, message: AgentExecutorResponse, ctx: WorkflowContext[str]):
+    async def format_for_eval(self, message: AgentExecutorResponse, ctx: WorkflowContext[AgentExecutorResponse]):
         self.state.final_answer = message.agent_response.text or ""
         eval_request = (
             f"Evaluate the following AI-generated answer.\n\n"
@@ -174,7 +194,12 @@ class EvalFormatterExecutor(Executor):
             f"Score: [1-5]\n"
             f"Reasoning: [Brief explanation of your assessment]"
         )
-        await ctx.send_message(eval_request)
+        user_msg = Message("user", [eval_request])
+        await ctx.send_message(AgentExecutorResponse(
+            executor_id=self.id,
+            agent_response=AgentResponse(messages=[user_msg]),
+            full_conversation=[user_msg],
+        ))
 
 
 def create_transitions(state: MinionsState):
@@ -194,21 +219,15 @@ def create_transitions(state: MinionsState):
             print(f"Jobs created: {json.dumps(state.jobs, indent=2)}")
             return True
         except json.JSONDecodeError:
-            # Fallback to predefined jobs
-            state.jobs = [
-                "Find the contribution of Max Planck and the year it was made.",
-                "Find the contribution of Albert Einstein and the year it was made.",
-                "Find the contribution of Niels Bohr and the year it was made.",
-            ]
             print(f"Warning: Could not parse JSON. Using fallback jobs: {state.jobs}")
             return True
 
-    def has_results(msg) -> bool:
+    def has_results(msg: AgentExecutorResponse) -> bool:
         """Only proceed to synthesis if the local worker found results."""
-        if isinstance(msg, str) and msg == "NO_RESULTS":
+        if isinstance(msg, AgentExecutorResponse) and (msg.agent_response.text or "").strip() == "NO_RESULTS":
             print("\nLocalLM could not find any relevant information. Halting.")
             return False
-        return len(state.results) > 0
+        return any(state.results.values())
 
     return parse_jobs, has_results
 
@@ -219,26 +238,30 @@ async def main():
     print("      MINIONS Protocol Demo (Agent Framework)")
     print("=" * 50)
 
-    user_query = "what did Planck, Einstein, and Bohr contribute to quantum mechanics?"
+    user_query = "what did Planck and Bohr contribute to quantum mechanics and who developed the relativistic description of the wavefunction?"
     print(f"\nUser Query: {user_query}")
 
     state = MinionsState(user_query=user_query)
     parse_jobs, has_results = create_transitions(state)
 
     async with AzureCliCredential() as credential:
-        azure_client = AzureAIAgentClient(credential=credential)
+        azure_endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+        azure_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME")
 
-        decomposer = azure_client.as_agent(
+        decomposer = Agent(
+            FoundryChatClient(project_endpoint=azure_endpoint, model=azure_model, credential=credential),
             name="Cloud_Decomposer",
             instructions=DECOMPOSER_INSTRUCTIONS,
         )
 
-        synthesizer = azure_client.as_agent(
+        synthesizer = Agent(
+            FoundryChatClient(project_endpoint=azure_endpoint, model=azure_model, credential=credential),
             name="Cloud_Synthesizer",
             instructions=SYNTHESIZER_INSTRUCTIONS,
         )
 
-        evaluator = azure_client.as_agent(
+        evaluator = Agent(
+            FoundryChatClient(project_endpoint=azure_endpoint, model=azure_model, credential=credential),
             name="Cloud_Evaluator",
             instructions=EVALUATOR_INSTRUCTIONS_TEMPLATE.format(
                 document=QUANTUM_MECHANICS_HISTORY,
@@ -263,8 +286,7 @@ async def main():
         eval_formatter = EvalFormatterExecutor(state=state)
 
         # Cloud_Decomposer → (parse_jobs) → Local_Worker → (has_results) → Cloud_Synthesizer → Eval_Formatter → Cloud_Evaluator
-        builder = WorkflowBuilder()
-        builder.set_start_executor(decomposer)
+        builder = WorkflowBuilder(start_executor=decomposer)
         builder.add_edge(source=decomposer, target=local_worker, condition=parse_jobs)
         builder.add_edge(source=local_worker, target=synthesizer, condition=has_results)
         builder.add_edge(source=synthesizer, target=eval_formatter)
@@ -282,8 +304,8 @@ async def main():
 
         INTERNAL_EXECUTORS = {"Local_Worker", "Eval_Formatter"}
 
-        async for event in workflow.run_stream(decomposition_input):
-            if isinstance(event, AgentRunUpdateEvent):
+        async for event in workflow.run(decomposition_input, stream=True):
+            if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
                 if event.executor_id != current_agent:
                     if current_agent:
                         print()
@@ -329,12 +351,10 @@ async def main():
         print(f"\nCost & Efficiency Analysis (using character counts):")
         print(f"  - Characters processed by FREE LocalLM: ~{state.local_chars_processed}")
         print(f"  - Jobs created by cloud: {len(state.jobs)}")
-        print(f"  - Results extracted locally: {len(state.results)}")
+        print(f"  - Results extracted locally: {sum(len(v) for v in state.results.values())} answers across {len(state.results)} jobs")
         print(f"\nAnswer Quality:")
         print(f"  - AI Judge Score: {eval_score}/5")
         print("=" * 50)
-
-        await azure_client.close()
 
 
 if __name__ == "__main__":
