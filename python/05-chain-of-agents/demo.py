@@ -147,7 +147,7 @@ async def main():
     print(f"📄 Document split into {len(document_chunks)} sequential chunks.\n")
     
     # 1. Local SLM for the Workers (Stage 1)
-    local_config = LocalGenerationConfig(max_tokens=250, temp=0.1, repetition_penalty=1.15)
+    local_config = LocalGenerationConfig(max_tokens=250, temp=0.0, repetition_penalty=1.15)
     local_client = create_local_client(
         model_path=os.environ.get("LOCAL_MODEL_PATH", "phi-4-8bit"),
         generation_config=local_config,

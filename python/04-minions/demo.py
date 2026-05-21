@@ -107,7 +107,7 @@ def ensure_stateless(msgs):
 class LocalWorkerExecutor(Executor):
     """Processes document chunks with the local SLM to extract relevant facts for each job."""
 
-    def __init__(self, name: str, client: BaseChatClient, state: MinionsState, document: str, chunk_size: int = 500):
+    def __init__(self, name: str, client: BaseChatClient, state: MinionsState, document: str, chunk_size: int = 1000):
         super().__init__(id=name)
         self.client = client
         self.state = state
@@ -138,10 +138,10 @@ class LocalWorkerExecutor(Executor):
                 is_failure = result_lower == "none"
 
                 if not is_failure and result:
-                    print(f"  - SUCCESS: Found relevant result in chunk {i + 1}!")
+                    print(f"  - ✅ SUCCESS: Found relevant result in chunk {i + 1}!")
                     self.state.results.setdefault(job, []).append(result)
                 else:
-                    print(f"  - No relevant info found in chunk {i + 1}.")
+                    print(f"  - ❌ No relevant info found in chunk {i + 1}.")
 
                 print(f"    (LocalLM response: '{result}')")
 
@@ -238,8 +238,8 @@ async def main():
     print("      MINIONS Protocol Demo (Agent Framework)")
     print("=" * 50)
 
-    user_query = "what did Planck and Bohr contribute to quantum mechanics and who developed the relativistic description of the wavefunction?"
-    print(f"\nUser Query: {user_query}")
+    user_query = "what did Planck and Bohr contribute to quantum mechanics and who developed the relativistic description of the wavefunction of an electron?"
+    print(f"\n👩 User: {user_query}")
 
     state = MinionsState(user_query=user_query)
     parse_jobs, has_results = create_transitions(state)
