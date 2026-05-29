@@ -9,13 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-rc4" />
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-rc4" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.7.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.7.0" />
     <ProjectReference Include="../Shared/Shared.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="security_logs.txt">
+    <Content Include="quantum_mechanics_history.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

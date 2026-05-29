@@ -6,9 +6,9 @@
 // STRONG (complex/reasoning).  WEAK queries go to the local SLM; STRONG
 // queries go to the cloud LLM.
 //
-// Backend configuration (see dotnet/.env.example):
-//   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-openai)
+// Backend configuration (see dotnet/launchSettings.json.example):
+//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
+//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using HybridAgentDemos.Shared;
@@ -41,8 +41,11 @@ var workflow = new WorkflowBuilder(routerExecutor)
 
 string[] queries =
 [
-    "Explain the implications of quantum computing on cryptography",
-    "What are the three primary colors?",
+    // example 1: Complex -> Should route to Strong
+    "Explain shortly the implications of quantum computing on cryptography",
+
+    // example 2: Simple -> Should route to Weak
+    "Write a haiku about ice hockey"
 ];
 
 foreach (var query in queries)
@@ -70,17 +73,25 @@ namespace RouterAgent
     sealed class RouterExecutor(IChatClient routerClient) : Executor<string, RouterDecision>("Router_Control_Plane")
     {
         private const string RouterInstructions = """
-            You are a high-precision query classifier.
+            You are a high-precision query classifier. 
+            Your ONLY job is to route the user's query to the appropriate model.
             - 'ROUTE: WEAK': For simple facts, formatting, summaries, or questions with obvious answers.
             - 'ROUTE: STRONG': For reasoning, coding, creative writing, analysis, or complex multi-step tasks.
 
             EXAMPLES:
-            Input: "What is the capital of France?" → Output: ROUTE: WEAK
-            Input: "Write a Python script to parse a CSV and plot the data." → Output: ROUTE: STRONG
-            Input: "Summarize this short text." → Output: ROUTE: WEAK
-            Input: "Explain the implications of quantum computing on modern cryptography." → Output: ROUTE: STRONG
+            Input: "What is the capital of France?"
+            Output: ROUTE: WEAK
 
-            Output ONLY 'ROUTE: WEAK' or 'ROUTE: STRONG'. Do not answer the query.
+            Input: "Write a Python script to parse a CSV and plot the data."
+            Output: ROUTE: STRONG
+
+            Input: "Summarize this short text."
+            Output: ROUTE: WEAK
+
+            Input: "Explain the mathematical difference between matrix mechanics and wave mechanics in quantum mechanics."
+            Output: ROUTE: STRONG
+
+            You must output ONLY 'ROUTE: WEAK' or 'ROUTE: STRONG'. Do not answer the user query.
             """;
 
         public override async ValueTask<RouterDecision> HandleAsync(
@@ -96,8 +107,8 @@ namespace RouterAgent
 
             bool isStrong = (response.Text ?? string.Empty).Contains("ROUTE: STRONG");
             Console.WriteLine(isStrong
-                ? "   [🔀 Decision]: STRONG (Complex Query -> Cloud LLM)"
-                : "   [🔀 Decision]: WEAK   (Simple/Factual -> Local SLM)");
+                ? "   [🔀 Decision]: STRONG (Complex Query -> Azure)"
+                : "   [🔀 Decision]: WEAK (Simple/Factual -> Local)");
 
             return new RouterDecision(query, isStrong);
         }
