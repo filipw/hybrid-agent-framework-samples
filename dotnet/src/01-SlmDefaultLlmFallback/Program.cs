@@ -31,13 +31,20 @@ var workflow = new WorkflowBuilder(slmExecutor)
 
 string[] queries =
 [
+    // 1. Easy Fact
     "What is the capital of France?",
-    "Convert this list to a JSON array: Apple, Banana, Cherry",
+
+    // 1b. Tricky Fact
+    "In which year was Wisloka Debica founded?",
+
+    // 2. Extraction
+    "Convert this list to a JSON shopping list: Apple 2 items, Banana 3 items, Cherries 1 item. Return pure JSON no additional text or formatting.",
+
+    // 3. Ambiguous
     "Where is the city of Springfield located?",
+
+    // 4. Hallucination Trap
     "Explain in 2 sentences the role of quantum healing in modeling proteins.",
-    "If I have a cabbage, a goat, and a wolf, and I need to cross a river " +
-    "but can only take one item at a time, and I can't leave the goat with " +
-    "the cabbage or the wolf with the goat, how do I do it?",
 ];
 
 foreach (var query in queries)
@@ -67,13 +74,17 @@ namespace SlmDefaultLlmFallback
         {
             string prompt =
                 query +
-                "\nIMPORTANT: End your response with 'CONFIDENCE: X' (1-10). " +
-                "If you are sure of your answer, you MUST output a score of 8 or higher.";
+                "\nIMPORTANT: End response with 'CONFIDENCE: X' (1-10). " +
+                "You are allowed to output a score of 8 or higher ONLY IF you are very sure of your answer.";
 
             Console.Write("   🤖 Local_SLM: ");
             string fullText = string.Empty;
             await foreach (var update in slmClient.GetStreamingResponseAsync(
-                [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken))
+                [
+                    new ChatMessage(ChatRole.System,
+                        "You are a helpful assistant. Always end your response with 'CONFIDENCE: X' where X is a number from 1-10 reflecting how confident you are in your answer. If you are sure of your answer, you MUST output a score of 8 or higher."),
+                    new ChatMessage(ChatRole.User, prompt)
+                ], cancellationToken: cancellationToken))
             {
                 Console.Write(update.Text);
                 fullText += update.Text ?? string.Empty;

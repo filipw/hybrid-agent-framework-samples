@@ -8,8 +8,8 @@
 // and applies majority-vote convergence (k_threshold=3 margin).
 //
 // Backend configuration (see dotnet/launchSettings.json.example):
-//   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-ai)
+//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
+//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using System.Text.Json;
@@ -48,7 +48,7 @@ var workflow = new WorkflowBuilder(plannerExecutor)
     .WithOutputFrom(managerExecutor)
     .Build();
 
-string userQuery = "Calculate ((5 + 3) * 10) / 2. Then divide this result by 4 and add 6.";
+string userQuery = "Calculate ((((5 + 3) * 10) / 2) / 4) + 4"; // the answer is 14
 Console.WriteLine($"🚀 Query: {userQuery}");
 
 await using var run = await InProcessExecution.RunStreamingAsync(workflow, userQuery);
@@ -78,14 +78,16 @@ namespace Maker
     sealed class CloudPlannerExecutor(IChatClient llmClient, MakerState state) : Executor<string, string>("Cloud_Planner")
     {
         private const string PlannerInstructions = """
-            You are a decomposition engine. Break the user request into atomic, actionable steps.
+            You are a decomposition engine. Your goal is to break a complex user request into a sequence of atomic, actionable steps for a worker agent to execute one by one.
+
             RULES:
-            1. Output commands (e.g. 'Add 5 and 3'), NOT results.
-            2. Each step must be a single action.
-            3. Refer to previous step output as 'the result' or 'the previous state'.
-            4. Preserve exact numbers and entities from the user request.
-            5. Return ONLY a JSON array of strings. Example: ["Step 1", "Step 2"]
-            6. Do NOT use '=' to show results.
+            1. INSTRUCTION NOT SOLUTION: Output commands (e.g., 'Find X', 'Calculate Y', 'Search for Z'), NOT results or facts. Do not perform the task yourself.
+            2. ATOMIC STEPS: Each step must be a single, distinct action.
+            3. FORWARD REFERENCES: Refer to the output of previous steps as 'the result', 'the output', or 'the previous state'. Do not assume you know what the value is.
+            4. DATA FIDELITY: Preserve specific names, numbers, and entities from the user's request exactly.
+            5. NO PREDICTIONS: Do not predict, simulate, or include the outcome of the steps in the instructions.
+            6. FORMAT: Return ONLY a JSON array of strings, e.g. ["step 1", "step 2"]. No markdown, no extra text.
+            7. NO EQUALS SIGNS: Do not use '=' to show results.
             """;
 
         public override async ValueTask<string> HandleAsync(

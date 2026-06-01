@@ -8,9 +8,9 @@
 // Synthesizer aggregates the extracted facts into a final answer, and a cloud
 // Evaluator scores the answer quality.
 //
-// Backend configuration (see dotnet/.env.example):
-//   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-openai)
+// Backend configuration (see dotnet/launchSettings.json.example):
+//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
+//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using System.Diagnostics;
@@ -28,11 +28,11 @@ Console.WriteLine(new string('=', 50));
 Console.WriteLine("      MINIONS Protocol Demo (Agent Framework)");
 Console.WriteLine(new string('=', 50));
 
-string userQuery    = "what did Planck, Einstein, and Bohr contribute to quantum mechanics?";
+string userQuery    = "what did Planck and Bohr contribute to quantum mechanics and who developed the relativistic description of the wavefunction of an electron?";
 string documentPath = Path.Combine(AppContext.BaseDirectory, "quantum_mechanics_history.txt");
 string document     = File.ReadAllText(documentPath);
 
-Console.WriteLine($"\nUser Query: {userQuery}");
+Console.WriteLine($"\n👩 User: {userQuery}");
 
 var state = new MinionsState { UserQuery = userQuery };
 
@@ -82,9 +82,11 @@ Console.WriteLine($"Evaluation Details:\n{evalOutput}");
 Console.WriteLine(new string('=', 50));
 Console.WriteLine("\n--- Performance & Results Report ---");
 Console.WriteLine($"Total Workflow Duration: {totalSw.Elapsed.TotalSeconds:F2}s");
-Console.WriteLine($"  - Characters processed by LocalLM (SLM): ~{state.LocalCharsProcessed}");
+Console.WriteLine($"\nCost & Efficiency Analysis (using character counts):");
+Console.WriteLine($"  - Characters processed by FREE LocalLM: ~{state.LocalCharsProcessed}");
 Console.WriteLine($"  - Jobs created by cloud: {state.Jobs.Count}");
-Console.WriteLine($"  - Results extracted locally: {state.Results.Count}");
+Console.WriteLine($"  - Results extracted locally: {state.Results.Values.Sum(v => v.Count)} answers across {state.Results.Count} jobs");
+Console.WriteLine($"\nAnswer Quality:");
 Console.WriteLine($"  - AI Judge Score: {evalScore}/5");
 Console.WriteLine(new string('=', 50));
 
@@ -96,11 +98,11 @@ namespace Minions
     {
         public const string LocalWorkerTemplate = """
             You are a meticulous and literal fact-checker. Your process is a strict two-step evaluation:
-            1. First, analyze the 'Context' to determine if it contains any information that can directly answer the 'Task'.
-            2. If the 'Context' is NOT relevant to the 'Task', you MUST immediately stop and respond with the single word: none.
+            1.  First, analyze the 'Context' to determine if it contains any information that can directly answer the 'Task'.
+            2.  If the 'Context' is NOT relevant to the 'Task', you MUST immediately stop and respond with the single word: none.
 
             - If and ONLY IF the information is present, extract the relevant facts verbatim or as a close paraphrase.
-            - Do NOT invent, guess, or mix information from different people or concepts.
+            - Do NOT invent, guess, or mix information from different people or concepts. If the primary subject of the 'Task' (e.g., a person's name) is not mentioned in the 'Context', the answer is always 'none'.
             - Your final output must be ONLY the extracted data or the word 'none'.
 
             Context:
@@ -111,18 +113,22 @@ namespace Minions
             """;
 
         public const string Decomposer = """
-            You are a task decomposition expert. Break down the user's complex query
-            into simple, atomic extraction tasks.
+            You are a task decomposition expert. Your job is to break down a user's complex query into simple, atomic extraction tasks.
+
             Rules:
-            - Each task should be a single, focused question answerable from a text chunk.
-            - Create 3-7 tasks depending on query complexity.
-            - Return ONLY a JSON array of task strings. Format: ["task 1", "task 2"]
+            - Each task should be a single, focused question that can be answered from a text chunk.
+            - Tasks should be specific and actionable (e.g., "Find X and the year Y") and intended for finding information in the attached text
+            - Tasks should not depend on other tasks
+            - Tasks should be self contained (possible to execute without knowing the original query). Do not refer to objects and subjects from the original query using "it/he/she", but mention them by name explicitly.
+            - Create 2-4 tasks depending on the complexity of the query
+            - Return ONLY a JSON array of task strings, nothing else
+            - Format: ["task 1", "task 2", "task 3"]
             """;
 
         public const string Synthesizer = """
-            You are a science historian. You have received a list of facts extracted from a document.
-            - Synthesize this information into a clear, structured answer to the user's original query.
-            - Organize the information by scientist.
+            You are a document writer. You have received a list of facts extracted from a document.
+            - Your task is to synthesize this information into a clear, structured answer to the user's original query.
+            - Organize the information.
             - Do not mention the extraction process, just provide the final answer.
             """;
     }
@@ -131,7 +137,7 @@ namespace Minions
     {
         public string UserQuery { get; set; } = string.Empty;
         public List<string> Jobs { get; set; } = [];
-        public List<string> Results { get; set; } = [];
+        public Dictionary<string, List<string>> Results { get; set; } = new(StringComparer.Ordinal);
         public string FinalAnswer { get; set; } = string.Empty;
         public int LocalCharsProcessed { get; set; }
     }
@@ -221,25 +227,36 @@ namespace Minions
                     bool isNone = string.Equals(result, "none", StringComparison.OrdinalIgnoreCase);
                     if (!isNone && !string.IsNullOrEmpty(result))
                     {
-                        Console.WriteLine($"  - SUCCESS: Found relevant result in chunk {i + 1}!");
-                        state.Results.Add(result);
+                        Console.WriteLine($"  - \u2705 SUCCESS: Found relevant result in chunk {i + 1}!");
+                        if (!state.Results.TryGetValue(job, out var jobResults))
+                        {
+                            jobResults = [];
+                            state.Results[job] = jobResults;
+                        }
+                        jobResults.Add(result);
                     }
                     else
                     {
-                        Console.WriteLine($"  - No relevant info found in chunk {i + 1}.");
+                        Console.WriteLine($"  - \u274c No relevant info found in chunk {i + 1}.");
                     }
                     Console.WriteLine($"    (LocalLM response: '{result}')");
                 }
             }
             sw.Stop();
             Console.WriteLine($"Local job execution finished in {sw.Elapsed.TotalSeconds:F2}s.");
+            int totalResults = state.Results.Values.Sum(v => v.Count);
+            Console.WriteLine($"Filtered results to be sent to RemoteLM: {totalResults} answers across {state.Results.Count} jobs");
+            Console.WriteLine($"  {System.Text.Json.JsonSerializer.Serialize(state.Results)}");
 
             if (state.Results.Count > 0)
             {
-                string resultsList = string.Join("\n", state.Results.Select(r => $"- {r}"));
+                var resultsParts = state.Results.Select(kv =>
+                    $"Job: {kv.Key}\nAnswers:\n" +
+                    string.Join("\n", kv.Value.Select(a => $"  - {a}")));
+                string resultsSummary = string.Join("\n\n", resultsParts);
                 return
                     $"Original Query: {state.UserQuery}\n\n" +
-                    $"Extracted Information:\n{resultsList}\n\n" +
+                    $"Extracted Information (grouped by task):\n{resultsSummary}\n\n" +
                     "Please provide a final, synthesized answer.";
             }
             return "NO_RESULTS";
@@ -291,15 +308,31 @@ namespace Minions
     {
         private readonly string _instructions =
             $"""
-            You are an expert evaluator. Assess the quality of an AI-generated answer on a scale of 1-5:
-            1 = Very Poor  2 = Poor  3 = Fair  4 = Good  5 = Excellent
-            Criteria: accuracy, completeness, clarity, relevance.
-            Format: Score: [1-5]\nReasoning: [Brief explanation]
+            You are an expert evaluator of AI-generated responses. Your task is to assess the quality of an answer given the original document, user query, and the generated response.
+
+            Please evaluate the response on a scale of 1-5 where:
+            1 = Very Poor (completely inaccurate or irrelevant)
+            2 = Poor (mostly inaccurate with some relevant information)
+            3 = Fair (some accuracy but missing key information or has notable errors)
+            4 = Good (mostly accurate and complete with minor issues)
+            5 = Excellent (highly accurate, complete, and well-structured)
+
+            Consider these criteria:
+            - Accuracy: Does the answer correctly reflect the information in the source document?
+            - Completeness: Does it address all parts of the user's query?
+            - Clarity: Is the answer well-organized and easy to understand?
+            - Relevance: Does it stay focused on what was asked?
+
+            Provide your evaluation in this exact format:
+            Score: [1-5]
+            Reasoning: [Brief explanation of your assessment]
 
             Original Document:
             {document}
 
             User Query: {userQuery}
+
+            You will receive the generated answer as input. Evaluate it against the document and query above.
             """;
 
         public override async ValueTask<string> HandleAsync(

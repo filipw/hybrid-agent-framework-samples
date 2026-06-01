@@ -9,8 +9,8 @@
 // receives the complete CU and synthesises the final answer.
 //
 // Backend configuration (see dotnet/launchSettings.json.example):
-//   SLM_BACKEND  — inference backend for the SLM role (default: ollama)
-//   LLM_BACKEND  — inference backend for the LLM role (default: azure-ai)
+//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
+//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using HybridAgentDemos.Shared;
@@ -24,7 +24,7 @@ Console.WriteLine("=============================================================
 Console.WriteLine("   Chain of Agents (CoA) Pattern (arXiv:2406.02818)");
 Console.WriteLine("===============================================================\n");
 
-string textFilePath = Path.Combine(AppContext.BaseDirectory, "security_logs.txt");
+string textFilePath = Path.Combine(AppContext.BaseDirectory, "quantum_mechanics_history.txt");
 string fullText     = File.ReadAllText(textFilePath);
 
 // Split into 2-line chunks (mirroring the Python demo)
@@ -33,7 +33,7 @@ var documentChunks = Enumerable.Range(0, (lines.Length + 1) / 2)
     .Select(i => string.Join('\n', lines.Skip(i * 2).Take(2)))
     .ToList();
 
-string query = "Create a brief chronological timeline of the ransomware attack and its resolution. Include the root cause.";
+string query = "How did quantum mechanics evolve from Planck's initial hypothesis to a complete mathematical framework? Trace the key contributors and what each one added.";
 
 Console.WriteLine($"❔ Query: {query}");
 Console.WriteLine($"📄 Document split into {documentChunks.Count} sequential chunks.\n");
@@ -100,9 +100,11 @@ namespace ChainOfAgents
                 $"{chunk}\n\n" +
                 $"{cuSection}\n\n" +
                 $"Question that will be answered later: {query}\n\n" +
-                "Summarize ALL events from the current source text together with the previous summary. " +
-                "Include every event with its timestamp and details — do not skip events even if they " +
-                "seem unrelated to the question. Do NOT invent or infer any events not explicitly stated. " +
+                "You need to read the current source text and the summary of the previous source text " +
+                "(if any) and generate a summary to include them both. " +
+                "Later, this summary will be used for other agents to answer the question. " +
+                "So please write the summary that can include the evidence for answering the question. " +
+                "Do NOT invent or infer anything not explicitly stated in the source text or previous summary. " +
                 "Output only the updated factual summary, 3-5 sentences, no commentary.";
 
             var response = await slmClient.GetResponseAsync(
@@ -124,21 +126,17 @@ namespace ChainOfAgents
         public override async ValueTask<string> HandleAsync(
             string finalCu, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            string instructions =
-                "You are the Manager Agent in a Chain of Agents workflow. " +
-                "Worker agents read the source text in chunks and produced the summary below. " +
-                "Treat this summary as your source material and use it to answer the question directly.\n\n" +
-                $"Question: {query}";
-
-            var messages = new List<ChatMessage>
-            {
-                new(ChatRole.System, instructions),
-                new(ChatRole.User, finalCu)
-            };
+            string prompt =
+                "The following are given passages. However, the source text is too long " +
+                "and has been summarized. You need to answer based on the summary:\n\n" +
+                $"{finalCu}\n\n" +
+                $"Question: {query}\n\n" +
+                "Answer:";
 
             Console.WriteLine("\n\n   ☁️  Cloud_Manager:\n   ");
             string fullText = string.Empty;
-            await foreach (var update in llmClient.GetStreamingResponseAsync(messages, cancellationToken: cancellationToken))
+            await foreach (var update in llmClient.GetStreamingResponseAsync(
+                [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken))
             {
                 Console.Write(update.Text);
                 fullText += update.Text ?? string.Empty;
