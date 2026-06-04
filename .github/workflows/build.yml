@@ -8,8 +8,12 @@ on:
 
 jobs:
   build:
-    name: Build
-    runs-on: macos-latest
+    name: Build (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +25,7 @@ jobs:
           cache-dependency-path: python/requirements.txt
 
       - name: Create virtual environment
+        shell: bash
         run: |
           if [ -d ".venv" ]; then
             echo "WARNING: .venv already exists – skipping creation"
@@ -30,18 +35,24 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: python
+        shell: bash
         run: |
           source ../.venv/bin/activate
           pip install --quiet --upgrade pip
-          # Skip agent-framework-mlx — Apple Silicon only
-          grep -v 'agent-framework-mlx' requirements.txt \
-            | pip install --quiet -r /dev/stdin
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            pip install --quiet -r requirements.txt
+          else
+            echo "  (non-Apple-Silicon platform — skipping agent-framework-mlx)"
+            grep -v 'agent-framework-mlx' requirements.txt \
+              | pip install --quiet -r /dev/stdin
+          fi
 
       - name: Python syntax check
         working-directory: python
+        shell: bash
         run: |
           source ../.venv/bin/activate
-          find . -name "*.py" \
+          find . -name "*.py" -not -path ".venv/*" \
             | xargs python -m py_compile
           echo "Syntax OK"
 
@@ -51,6 +62,7 @@ jobs:
 
       - name: .NET restore & build
         working-directory: dotnet
+        shell: bash
         run: |
           dotnet build HybridAgentDemos.slnx \
             --configuration Release \
