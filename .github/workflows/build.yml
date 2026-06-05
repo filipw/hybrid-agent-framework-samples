@@ -46,8 +46,10 @@ jobs:
             "$VENV_PYTHON" -m pip install --quiet -r requirements.txt
           else
             echo "  (non-Apple-Silicon platform — skipping agent-framework-mlx)"
-            grep -v 'agent-framework-mlx' requirements.txt \
-              | "$VENV_PYTHON" -m pip install --quiet -r /dev/stdin
+            FILTERED_REQS=$(mktemp)
+            grep -v 'agent-framework-mlx' requirements.txt > "$FILTERED_REQS"
+            "$VENV_PYTHON" -m pip install --quiet -r "$FILTERED_REQS"
+            rm -f "$FILTERED_REQS"
           fi
 
       - name: Python syntax check
