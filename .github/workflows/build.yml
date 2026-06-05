@@ -37,23 +37,29 @@ jobs:
         working-directory: python
         shell: bash
         run: |
-          source ../.venv/bin/activate
-          pip install --quiet --upgrade pip
+          VENV_PYTHON="../.venv/bin/python"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VENV_PYTHON="../.venv/Scripts/python"
+          fi
+          "$VENV_PYTHON" -m pip install --quiet --upgrade pip
           if [[ "$(uname -m)" == "arm64" ]]; then
-            pip install --quiet -r requirements.txt
+            "$VENV_PYTHON" -m pip install --quiet -r requirements.txt
           else
             echo "  (non-Apple-Silicon platform — skipping agent-framework-mlx)"
             grep -v 'agent-framework-mlx' requirements.txt \
-              | pip install --quiet -r /dev/stdin
+              | "$VENV_PYTHON" -m pip install --quiet -r /dev/stdin
           fi
 
       - name: Python syntax check
         working-directory: python
         shell: bash
         run: |
-          source ../.venv/bin/activate
+          VENV_PYTHON="../.venv/bin/python"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            VENV_PYTHON="../.venv/Scripts/python"
+          fi
           find . -name "*.py" -not -path ".venv/*" \
-            | xargs python -m py_compile
+            | xargs "$VENV_PYTHON" -m py_compile
           echo "Syntax OK"
 
       - uses: actions/setup-dotnet@v4
