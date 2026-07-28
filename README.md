@@ -40,7 +40,14 @@ Demos use short model alias names (e.g. `phi-4-mini`) that are automatically res
 ```bash
 cd python
 cp .env.example .env # fill in your variables
-pip install -r requirements.txt
+
+# agent-framework-mlx pins an older agent-framework-core in its own metadata, which
+# conflicts with the agent-framework version pinned in requirements.txt. Install
+# everything else first, then install agent-framework-mlx separately with --no-deps
+# (its real runtime deps, mlx/mlx-lm, are already installed via requirements.txt).
+# On non-Apple-Silicon platforms, skip agent-framework-mlx and use LOCAL_BACKEND=foundry_local instead.
+grep -v -E '^agent-framework-mlx==' requirements.txt | pip install -r /dev/stdin
+pip install --no-deps agent-framework-mlx==0.6.0
 ```
 
 ### Running
