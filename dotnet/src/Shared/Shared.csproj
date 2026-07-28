@@ -11,7 +11,7 @@
   <ItemGroup>
     <!-- Foundry Local via OpenAI-compatible endpoint.
          Brings OpenAI, Microsoft.Extensions.AI.OpenAI transitively. -->
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.7.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.15.0" />
     <PackageReference Include="Microsoft.Extensions.AI"    Version="10.*"       />
   </ItemGroup>
 

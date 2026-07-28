@@ -111,7 +111,7 @@ namespace ChainOfAgents
                 [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken);
             string outputCu = (response.Text ?? string.Empty).Trim();
 
-            Console.WriteLine($"\n   [{name} ({workerIdx}/{totalWorkers})] CU length: {outputCu.Length} chars");
+            Console.WriteLine($"\n   [{this.Id} ({workerIdx}/{totalWorkers})] CU length: {outputCu.Length} chars");
             Console.WriteLine($"   {new string('-', 60)}\n   {outputCu}\n   {new string('-', 60)}");
 
             return outputCu;
