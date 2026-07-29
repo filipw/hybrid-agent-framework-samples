@@ -34,11 +34,17 @@ source "$VENV_DIR/bin/activate"
 pip install --quiet --upgrade pip
 
 if [[ "$(uname)" == "Darwin" ]] && [[ "$(uname -m)" == "arm64" ]]; then
-    pip install --quiet -r "$REPO_ROOT/python/requirements.txt"
+    # agent-framework-mlx pins agent-framework-core==1.3.0 in its own metadata, which
+    # conflicts with the newer agent-framework pinned in requirements.txt. Install
+    # everything else normally, then install agent-framework-mlx with --no-deps (its
+    # real runtime deps, mlx/mlx-lm, are already listed in requirements.txt).
+    grep -v -E '^agent-framework-mlx==' "$REPO_ROOT/python/requirements.txt" \
+        | pip install --quiet -r /dev/stdin
+    pip install --quiet --no-deps agent-framework-mlx==0.6.0
     ok "installed full requirements (including agent-framework-mlx)"
 else
     echo "  (non-Apple-Silicon platform detected - skipping agent-framework-mlx)"
-    grep -v 'agent-framework-mlx' "$REPO_ROOT/python/requirements.txt" \
+    grep -v -E '^(agent-framework-mlx==|mlx==|mlx-lm==)' "$REPO_ROOT/python/requirements.txt" \
         | pip install --quiet -r /dev/stdin
     ok "installed requirements (agent-framework-mlx excluded)"
 fi

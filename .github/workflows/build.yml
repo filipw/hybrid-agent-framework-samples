@@ -43,11 +43,19 @@ jobs:
           fi
           "$VENV_PYTHON" -m pip install --quiet --upgrade pip
           if [[ "$(uname -m)" == "arm64" ]]; then
-            "$VENV_PYTHON" -m pip install --quiet -r requirements.txt
+            # agent-framework-mlx pins agent-framework-core==1.3.0 in its own metadata,
+            # which conflicts with the newer agent-framework pinned in requirements.txt.
+            # Install everything else normally, then install agent-framework-mlx with
+            # --no-deps (its real runtime deps, mlx/mlx-lm, are already in requirements.txt).
+            FILTERED_REQS=$(mktemp)
+            grep -v -E '^agent-framework-mlx==' requirements.txt > "$FILTERED_REQS"
+            "$VENV_PYTHON" -m pip install --quiet -r "$FILTERED_REQS"
+            rm -f "$FILTERED_REQS"
+            "$VENV_PYTHON" -m pip install --quiet --no-deps agent-framework-mlx==0.6.0
           else
             echo "  (non-Apple-Silicon platform — skipping agent-framework-mlx)"
             FILTERED_REQS=$(mktemp)
-            grep -v 'agent-framework-mlx' requirements.txt > "$FILTERED_REQS"
+            grep -v -E '^(agent-framework-mlx==|mlx==|mlx-lm==)' requirements.txt > "$FILTERED_REQS"
             "$VENV_PYTHON" -m pip install --quiet -r "$FILTERED_REQS"
             rm -f "$FILTERED_REQS"
           fi
