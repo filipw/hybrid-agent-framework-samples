@@ -31,20 +31,20 @@ var workflow = new WorkflowBuilder(slmExecutor)
 
 string[] queries =
 [
-    // 1. Easy Fact
-    "What is the capital of France?",
+        // 1. Easy Fact
+        "What is the capital of France?",
 
-    // 1b. Tricky Fact
-    "In which year was Wisloka Debica founded?",
+        // 1b. Tricky Fact
+        "In which year was Wisloka Debica founded?",
+        
+        // 2. Extraction
+        "Convert this list to a JSON shopping list: Apple 2 items, Banana 3 items, Cherries 1 item. Return pure JSON no additional text or formatting.",
+        
+        // 3. Ambiguous
+        "Where is the city of Springfield located?",
 
-    // 2. Extraction
-    "Convert this list to a JSON shopping list: Apple 2 items, Banana 3 items, Cherries 1 item. Return pure JSON no additional text or formatting.",
-
-    // 3. Ambiguous
-    "Where is the city of Springfield located?",
-
-    // 4. Hallucination Trap
-    "Explain in 2 sentences the role of quantum healing in modeling proteins.",
+        // 4. Hallucination Trap
+        "Explain in 2 sentences the role of quantum healing in modeling proteins.",
 ];
 
 foreach (var query in queries)
