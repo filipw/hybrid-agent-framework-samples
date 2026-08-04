@@ -66,9 +66,12 @@ namespace SlmDefaultLlmFallback
     /// <summary>Carries the SLM's response together with its self-reported confidence.</summary>
     record SLMResult(string OriginalQuery, string Response, int Confidence);
 
-    /// <summary>[SLM] Local_SLM – runs the smaller model and injects a confidence prompt.</summary>
+    /// <summary>[SLM] Local_SLM - runs the smaller model and injects a confidence prompt.</summary>
     sealed class LocalSLMExecutor(IChatClient slmClient) : Executor<string, SLMResult>("Local_SLM")
     {
+        // Matches python's LocalGenerationConfig(max_tokens=300) — temp defaults to 0.0.
+        private static readonly ChatOptions GenerationOptions = new() { Temperature = 0f, MaxOutputTokens = 300 };
+
         public override async ValueTask<SLMResult> HandleAsync(
             string query, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
@@ -84,7 +87,7 @@ namespace SlmDefaultLlmFallback
                     new ChatMessage(ChatRole.System,
                         "You are a helpful assistant. Always end your response with 'CONFIDENCE: X' where X is a number from 1-10 reflecting how confident you are in your answer. If you are sure of your answer, you MUST output a score of 8 or higher."),
                     new ChatMessage(ChatRole.User, prompt)
-                ], cancellationToken: cancellationToken))
+                ], GenerationOptions, cancellationToken))
             {
                 Console.Write(update.Text);
                 fullText += update.Text ?? string.Empty;
@@ -112,7 +115,7 @@ namespace SlmDefaultLlmFallback
         }
     }
 
-    /// <summary>[LLM] Cloud_LLM – fallback for low-confidence SLM responses.</summary>
+    /// <summary>[LLM] Cloud_LLM - fallback for low-confidence SLM responses.</summary>
     sealed class CloudLLMExecutor(IChatClient llmClient) : Executor<SLMResult, string>("Cloud_LLM")
     {
         public override async ValueTask<string> HandleAsync(

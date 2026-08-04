@@ -2,15 +2,11 @@
 // MINIONS Protocol (Local-Remote Map-Reduce)
 // Based on: arXiv:2502.15964
 //
-// A cloud LLM Decomposer breaks the user query into 3-7 atomic extraction
+// A cloud LLM Decomposer breaks the user query into 2-4 atomic extraction
 // jobs.  A local SLM Worker runs each job on every chunk of the document
 // (map phase) and filters out irrelevant chunks ("none" responses).  A cloud
 // Synthesizer aggregates the extracted facts into a final answer, and a cloud
 // Evaluator scores the answer quality.
-//
-// Backend configuration (see dotnet/launchSettings.json.example):
-//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
-//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using System.Diagnostics;
@@ -143,7 +139,7 @@ namespace Minions
     }
 
     /// <summary>
-    /// [LLM] Cloud_Decomposer – breaks the user query into atomic extraction jobs.
+    /// [LLM] Cloud_Decomposer - breaks the user query into atomic extraction jobs.
     /// </summary>
     sealed class CloudDecomposerExecutor(IChatClient llmClient, MinionsState state)
         : Executor<string, string>("Cloud_Decomposer")
@@ -194,11 +190,13 @@ namespace Minions
     }
 
     /// <summary>
-    /// [SLM] Local_Worker – map phase: for each chunk × job, run the local model.
+    /// [SLM] Local_Worker - map phase: for each chunk × job, run the local model.
     /// </summary>
-    sealed class LocalWorkerExecutor(IChatClient slmClient, MinionsState state, string document, int chunkSize = 500)
+    sealed class LocalWorkerExecutor(IChatClient slmClient, MinionsState state, string document, int chunkSize = 1000)
         : Executor<string, string>("Local_Worker")
     {
+        private static readonly ChatOptions GenerationOptions = new() { Temperature = 0.1f, MaxOutputTokens = 250 };
+
         public override async ValueTask<string> HandleAsync(
             string _, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
@@ -221,7 +219,7 @@ namespace Minions
                     state.LocalCharsProcessed += prompt.Length;
 
                     var response = await slmClient.GetResponseAsync(
-                        [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken);
+                        [new ChatMessage(ChatRole.User, prompt)], GenerationOptions, cancellationToken);
                     string result = (response.Text ?? string.Empty).Trim();
 
                     bool isNone = string.Equals(result, "none", StringComparison.OrdinalIgnoreCase);
@@ -263,7 +261,7 @@ namespace Minions
         }
     }
 
-    /// <summary>[LLM] Cloud_Synthesizer – aggregates extracted facts into a final answer.</summary>
+    /// <summary>[LLM] Cloud_Synthesizer - aggregates extracted facts into a final answer.</summary>
     sealed class CloudSynthesizerExecutor(IChatClient llmClient) : Executor<string, string>("Cloud_Synthesizer")
     {
         public override async ValueTask<string> HandleAsync(
@@ -287,7 +285,7 @@ namespace Minions
         }
     }
 
-    /// <summary>Eval_Formatter – stores synthesizer output and builds the evaluator prompt.</summary>
+    /// <summary>Eval_Formatter - stores synthesizer output and builds the evaluator prompt.</summary>
     sealed class EvalFormatterExecutor(MinionsState state) : Executor<string, string>("Eval_Formatter")
     {
         public override ValueTask<string> HandleAsync(
@@ -302,7 +300,7 @@ namespace Minions
         }
     }
 
-    /// <summary>[LLM] Cloud_Evaluator – scores the quality of the synthesized answer.</summary>
+    /// <summary>[LLM] Cloud_Evaluator - scores the quality of the synthesized answer.</summary>
     sealed class CloudEvaluatorExecutor(IChatClient llmClient, string document, string userQuery)
         : Executor<string, string>("Cloud_Evaluator")
     {

@@ -6,10 +6,6 @@
 // A Manager orchestrates a stateful loop: for each step it generates a CoT
 // prompt for the local SLM Solver.  The Solver runs the step multiple times
 // and applies majority-vote convergence (k_threshold=3 margin).
-//
-// Backend configuration (see dotnet/launchSettings.json.example):
-//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
-//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using System.Text.Json;
@@ -72,7 +68,7 @@ namespace Maker
     }
 
     /// <summary>
-    /// [LLM] Cloud_Planner – decomposes the user query into atomic ordered steps.
+    /// [LLM] Cloud_Planner - decomposes the user query into atomic ordered steps.
     /// Sends "PLAN_READY" to the Manager once state.Steps is populated.
     /// </summary>
     sealed class CloudPlannerExecutor(IChatClient llmClient, MakerState state) : Executor<string, string>("Cloud_Planner")
@@ -121,7 +117,7 @@ namespace Maker
     }
 
     /// <summary>
-    /// Manager – pure orchestration, no LLM calls.
+    /// Manager - pure orchestration.
     /// Returns a CoT prompt string (routed to the Solver via conditional edge),
     /// or a terminal "WORKFLOW_COMPLETE"/"ERROR:" string (blocked by the conditional edge).
     /// Terminal paths also call YieldOutputAsync to mark workflow output.
@@ -132,9 +128,8 @@ namespace Maker
             INSTRUCTION:
             1. Read the Current Task/Action.
             2. Apply this action to the Previous State.
-            3. Think step-by-step: what changes and what stays the same.
-            4. End with exactly 'Final Answer: [The Updated State or Value]'.
-               Use ONLY the raw value – no extra phrases like 'The Final Answer is...'.
+            3. Think step-by-step: describe what changes and what stays the same.
+            4. You MUST end your response with exactly 'Final Answer: [The Updated State or Value]'. Use ONLY the raw state value not any additional expression like 'The Final Answer is...' or 'The updated state is ...'.
             """;
 
         public override async ValueTask<string> HandleAsync(
@@ -168,11 +163,15 @@ namespace Maker
     }
 
     /// <summary>
-    /// [SLM] Voting_Solver – executes one step multiple times and applies majority voting.
+    /// [SLM] Voting_Solver - executes one step multiple times and applies majority voting.
     /// Returns a status string ("RETRY" or "RESOLVED: X") that routes back to Manager.
     /// </summary>
     sealed class VotingExecutor(IChatClient slmClient, MakerState state) : Executor<string, string>("Voting_Solver")
     {
+        // Matches python's LocalGenerationConfig(max_tokens=300, temp=0.8) — higher temp is
+        // required so repeated attempts at the same step actually vary enough to vote over.
+        private static readonly ChatOptions GenerationOptions = new() { Temperature = 0.8f, MaxOutputTokens = 300 };
+
         public override async ValueTask<string> HandleAsync(
             string prompt, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
@@ -185,7 +184,7 @@ namespace Maker
             }
 
             var response = await slmClient.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken);
+                [new ChatMessage(ChatRole.User, prompt)], GenerationOptions, cancellationToken);
             string answer = ExtractAnswer(response.Text ?? string.Empty);
             state.Attempts++;
 

@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           if [ -d ".venv" ]; then
-            echo "WARNING: .venv already exists – skipping creation"
+            echo "WARNING: .venv already exists - skipping creation"
           else
             python -m venv .venv
           fi

@@ -5,10 +5,6 @@
 // A dedicated router classifies each query as WEAK (simple/factual) or
 // STRONG (complex/reasoning).  WEAK queries go to the local SLM; STRONG
 // queries go to the cloud LLM.
-//
-// Backend configuration (see dotnet/launchSettings.json.example):
-//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
-//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using HybridAgentDemos.Shared;
@@ -68,7 +64,7 @@ namespace RouterAgent
     record RouterDecision(string OriginalQuery, bool IsStrong);
 
     /// <summary>
-    /// [SLM] Router_Control_Plane – few-shot classifier at low temperature.
+    /// [SLM] Router_Control_Plane - few-shot classifier at low temperature.
     /// </summary>
     sealed class RouterExecutor(IChatClient routerClient) : Executor<string, RouterDecision>("Router_Control_Plane")
     {
@@ -115,7 +111,7 @@ namespace RouterAgent
     }
 
     /// <summary>
-    /// [SLM] Weak_Model_Worker – handles simple queries using the local model.
+    /// [SLM] Weak_Model_Worker - handles simple queries using the local model.
     /// </summary>
     sealed class WeakModelWorker(IChatClient slmClient) : Executor<RouterDecision, string>("Weak_Model_Worker")
     {
@@ -140,7 +136,7 @@ namespace RouterAgent
     }
 
     /// <summary>
-    /// [LLM] Strong_Model_Worker – handles complex queries using the cloud LLM.
+    /// [LLM] Strong_Model_Worker - handles complex queries using the cloud LLM.
     /// </summary>
     sealed class StrongModelWorker(IChatClient llmClient) : Executor<RouterDecision, string>("Strong_Model_Worker")
     {

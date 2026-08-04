@@ -7,18 +7,12 @@
 // "Communication Unit" (CU) to the next worker.  Each worker reads its chunk
 // + the previous CU and outputs an updated CU.  The final cloud LLM Manager
 // receives the complete CU and synthesises the final answer.
-//
-// Backend configuration (see dotnet/launchSettings.json.example):
-//   FOUNDRY_LOCAL_SLM_MODEL  — model alias for the SLM role
-//   FOUNDRY_LOCAL_LLM_MODEL  — model alias for the LLM role
 // =============================================================================
 
 using HybridAgentDemos.Shared;
 using ChainOfAgents;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-
-// ── Main ─────────────────────────────────────────────────────────────────────
 
 Console.WriteLine("===============================================================");
 Console.WriteLine("   Chain of Agents (CoA) Pattern (arXiv:2406.02818)");
@@ -27,10 +21,11 @@ Console.WriteLine("=============================================================
 string textFilePath = Path.Combine(AppContext.BaseDirectory, "quantum_mechanics_history.txt");
 string fullText     = File.ReadAllText(textFilePath);
 
-// Split into 2-line chunks (mirroring the Python demo)
+// Split into 2-line chunks
+const int LinesPerChunk = 2;
 var lines = fullText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-var documentChunks = Enumerable.Range(0, (lines.Length + 1) / 2)
-    .Select(i => string.Join('\n', lines.Skip(i * 2).Take(2)))
+var documentChunks = Enumerable.Range(0, (lines.Length + LinesPerChunk - 1) / LinesPerChunk)
+    .Select(i => string.Join('\n', lines.Skip(i * LinesPerChunk).Take(LinesPerChunk)))
     .ToList();
 
 string query = "How did quantum mechanics evolve from Planck's initial hypothesis to a complete mathematical framework? Trace the key contributors and what each one added.";
@@ -68,12 +63,10 @@ await foreach (var evt in run.WatchStreamAsync())
 
 Console.WriteLine("\n\n✅ Workflow Complete.");
 
-// ── Types & Executors ────────────────────────────────────────────────────────
-
 namespace ChainOfAgents
 {
     /// <summary>
-    /// [SLM] Worker – reads one chunk and updates the Communication Unit (CU).
+    /// [SLM] Worker - reads one chunk and updates the Communication Unit (CU).
     /// CU is truncated to 1500 chars to respect context budget (paper MAX_CU_CHARS).
     /// </summary>
     sealed class WorkerExecutor(
@@ -86,29 +79,39 @@ namespace ChainOfAgents
     {
         private const int MaxCuChars = 1500;
 
+        private static readonly ChatOptions GenerationOptions = new() { Temperature = 0f, MaxOutputTokens = 700 };
+
         public override async ValueTask<string> HandleAsync(
             string previousCu, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
             string cu = previousCu.Trim();
             if (cu.Length > MaxCuChars) cu = "..." + cu[^(MaxCuChars - 3)..];
 
-            string cuSection = string.IsNullOrEmpty(cu)
-                ? "There is no previous summary yet — this is the first chunk."
-                : $"Here is the summary of the previous source text: {cu}";
+            string accumulated = string.IsNullOrEmpty(cu) ? "(none yet — this is the first chunk)" : cu;
 
+            // Clearly delimited sections (accumulated knowledge / new chunk / task.
+            // Explicitly forbids answering yet
             string prompt =
-                $"{chunk}\n\n" +
-                $"{cuSection}\n\n" +
-                $"Question that will be answered later: {query}\n\n" +
-                "You need to read the current source text and the summary of the previous source text " +
-                "(if any) and generate a summary to include them both. " +
-                "Later, this summary will be used for other agents to answer the question. " +
-                "So please write the summary that can include the evidence for answering the question. " +
-                "Do NOT invent or infer anything not explicitly stated in the source text or previous summary. " +
-                "Output only the updated factual summary, 3-5 sentences, no commentary.";
+                $"""
+                ### ACCUMULATED KNOWLEDGE SO FAR
+                {accumulated}
+
+                ### NEW SOURCE TEXT (chunk {workerIdx} of {totalWorkers})
+                {chunk}
+
+                ### TASK
+                Extract every fact from NEW SOURCE TEXT that is relevant to this question: "{query}"
+                Merge those facts into ACCUMULATED KNOWLEDGE, keeping everything already there.
+
+                RULES:
+                - Use ONLY facts stated in NEW SOURCE TEXT or ACCUMULATED KNOWLEDGE. Never use outside/prior knowledge.
+                - Never drop or summarize away anything already in ACCUMULATED KNOWLEDGE.
+                - Do NOT answer the question yet — only accumulate knowledge for a later step.
+                - Output ONLY the updated ACCUMULATED KNOWLEDGE as plain factual sentences. No headers, no commentary.
+                """;
 
             var response = await slmClient.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, prompt)], cancellationToken: cancellationToken);
+                [new ChatMessage(ChatRole.User, prompt)], GenerationOptions, cancellationToken);
             string outputCu = (response.Text ?? string.Empty).Trim();
 
             Console.WriteLine($"\n   [{this.Id} ({workerIdx}/{totalWorkers})] CU length: {outputCu.Length} chars");
@@ -119,7 +122,7 @@ namespace ChainOfAgents
     }
 
     /// <summary>
-    /// [LLM] Cloud_Manager – receives the final CU and answers the query.
+    /// [LLM] Cloud_Manager - receives the final CU and answers the query.
     /// </summary>
     sealed class CloudManagerExecutor(IChatClient llmClient, string query) : Executor<string, string>("Cloud_Manager")
     {
