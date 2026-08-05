@@ -4,9 +4,12 @@
       "commandName": "Project",
       "environmentVariables": {
 
-        "FOUNDRY_LOCAL_ENDPOINT": "http://localhost:5272",
-        "FOUNDRY_LOCAL_SLM_MODEL": "phi-4-mini-instruct",
-        "FOUNDRY_LOCAL_LLM_MODEL": "phi-4"
+        "OPENAI_ENDPOINT": "https://<resource>.openai.azure.com/openai/v1",
+        "OPENAI_API_KEY": "<your-api-key>",
+        "OPENAI_LLM_MODEL": "<deployment-or-model-name>",
+
+        "FOUNDRY_LOCAL_ENDPOINT": "http://127.0.0.1:<port>",
+        "FOUNDRY_LOCAL_SLM_MODEL": "phi-4-mini"
 
       }
     }
