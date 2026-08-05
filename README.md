@@ -83,40 +83,40 @@ python 05-chain-of-agents/demo.py
 
 ## .NET
 
-> Uses [`Microsoft.Agents.AI.Workflows`](https://www.nuget.org/packages/Microsoft.Agents.AI.Workflows) (RC4) and [OllamaSharp](https://www.nuget.org/packages/OllamaSharp) for local inference.
+> Uses [`Microsoft.Agents.AI.Workflows`](https://www.nuget.org/packages/Microsoft.Agents.AI.Workflows) for orchestration.
 > All five patterns are ported 1-to-1 from the Python originals.
 
-The .NET port supports **three interchangeable inference backends**, selected independently for the SLM and LLM roles via environment variables:
-
-| Backend | `SLM_BACKEND` / `LLM_BACKEND` value | Use case |
-|---------|--------------------------------------|----------|
-| **Ollama** | `ollama` *(default for SLM)* | Local inference via Ollama's native API |
-| **OpenAI-compatible** | `openai-compatible` | Any server exposing `/v1/chat/completions` (LM Studio, vLLM, llama.cpp, …) |
-| **Azure AI Foundry** | `azure-ai` *(default for LLM)* | Hosted models on Azure AI Foundry via bearer-token auth |
+The .NET port uses **one local backend, [Foundry Local](https://www.foundrylocal.ai)**, for the SLM role, and any **OpenAI-compatible endpoint** (Azure OpenAI or OpenAI) for the LLM role.
 
 ### Prerequisites
 
 - .NET 10 SDK
-- At least one of:
-  - [Ollama](https://ollama.com) running locally (for the SLM role)
-  - An OpenAI-compatible server such as [LM Studio](https://lmstudio.ai) or [vLLM](https://github.com/vllm-project/vllm) (for the SLM role)
-  - Azure CLI logged in (`az login`) with an Azure AI Foundry resource (for the LLM role)
+- [Foundry Local](https://www.foundrylocal.ai) running locally with a model loaded for the SLM role — install via `brew install microsoft/foundrylocal/foundrylocal` (macOS) or see the [Foundry Local docs](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-local/get-started)
+- An OpenAI-compatible endpoint and API key for the LLM role (e.g. an Azure OpenAI deployment or OpenAI itself)
 
 ### Setup
 
-Each project reads configuration from its `Properties/launchSettings.json`.  A template is provided:
+Configuration is read from plain process environment variables (not `launchSettings.json`). Create a `.env` file in `dotnet/src/` (gitignored) with your values:
 
 ```bash
-cd dotnet/src/<project>
-cp ../../launchSettings.json.example Properties/launchSettings.json
-# edit Properties/launchSettings.json and fill in your values
+export OPENAI_ENDPOINT="https://<resource>.openai.azure.com/openai/v1"
+export OPENAI_API_KEY="<your-api-key>"
+export OPENAI_LLM_MODEL="<deployment-or-model-name>"
+
+export FOUNDRY_LOCAL_ENDPOINT="http://127.0.0.1:<port>"
+export FOUNDRY_LOCAL_SLM_MODEL="phi-4-mini"
 ```
 
-> `Properties/launchSettings.json` is gitignored — your credentials stay local.
+Then source it in your shell before running any demo:
+
+```bash
+cd dotnet/src
+source .env
+```
 
 ### Running
 
-Open `dotnet/HybridAgentDemos.slnx` in Visual Studio / Rider, or run from the CLI:
+Open `dotnet/HybridAgentDemos.slnx` in Visual Studio / Rider, or run from the CLI (after sourcing `.env` as above):
 
 ```bash
 dotnet run --project dotnet/src/01-SlmDefaultLlmFallback
@@ -126,37 +126,12 @@ dotnet run --project dotnet/src/04-Minions
 dotnet run --project dotnet/src/05-ChainOfAgents
 ```
 
-### Configuration Reference
+### Environment Variables
 
-All variables are set in `Properties/launchSettings.json` (see `dotnet/launchSettings.json.example`).
-
-**Role selection**
-
-| Variable | Values | Default |
-|----------|--------|---------|
-| `SLM_BACKEND` | `ollama` \| `openai-compatible` \| `azure-ai` | `ollama` |
-| `LLM_BACKEND` | `ollama` \| `openai-compatible` \| `azure-ai` | `azure-ai` |
-
-**Ollama backend**
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OLLAMA_ENDPOINT` | Ollama server URL | `http://localhost:11434` |
-| `OLLAMA_SLM_MODEL` | Model name for the SLM role | `phi4-mini` |
-| `OLLAMA_LLM_MODEL` | Model name for the LLM role | `llama3.1:8b` |
-
-**OpenAI-compatible backend**
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OPENAI_COMPATIBLE_ENDPOINT` | Server base URL (without `/v1`) | `http://localhost:1234` |
-| `OPENAI_COMPATIBLE_SLM_MODEL` | Model name for the SLM role | `phi-4-mini-instruct` |
-| `OPENAI_COMPATIBLE_LLM_MODEL` | Model name for the LLM role | `llama3.1:8b` |
-
-**Azure AI Foundry backend**
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `AZURE_AI_FOUNDRY_ENDPOINT` | Azure AI Foundry OpenAI endpoint | `https://<resource>.ai.azure.com/openai/v1/` |
-| `AZURE_AI_SLM_DEPLOYMENT_NAME` | Deployment name for the SLM role | `gpt-4o-mini` |
-| `AZURE_AI_LLM_DEPLOYMENT_NAME` | Deployment name for the LLM role | `gpt-4.1` |
+| Variable | Description | Used for |
+|----------|-------------|----------|
+| `OPENAI_ENDPOINT` | Base URL (including `/openai/v1` for Azure OpenAI, or `/v1` for OpenAI) of an OpenAI-compatible API | LLM role |
+| `OPENAI_API_KEY` | API key for the endpoint above | LLM role |
+| `OPENAI_LLM_MODEL` | Model or deployment name | LLM role |
+| `FOUNDRY_LOCAL_ENDPOINT` | Foundry Local server URL (no `/v1` suffix) | SLM role |
+| `FOUNDRY_LOCAL_SLM_MODEL` | Model alias loaded in Foundry Local | SLM role |
